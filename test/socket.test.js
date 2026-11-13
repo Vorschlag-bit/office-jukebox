@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createHash } from 'node:crypto';
-import { FrameDecoder, encodeFrame, JsonSocket } from '../src/socket.js';
+import https from 'node:https';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { FrameDecoder, encodeFrame, JsonSocket, normalizeFingerprint } from '../src/socket.js';
 
 for (const size of [0, 4, 125, 126, 65535, 65536]) test(`WebSocket frame roundtrip size ${size}, arbitrary TCP splits`, () => {
   const text = 'x'.repeat(size), frames = [];
@@ -20,6 +21,44 @@ test('WebSocket invalid fragmented control frame rejected', () => {
 });
 test('TLS TV connection requires explicit certificate pin before any request', async () => {
   await assert.rejects(new JsonSocket('wss://192.0.2.1:8002').connect(), { code: 'TLS_PIN' });
+});
+test('SHA-256 pins accept exact hex or colon format and reject ambiguous shapes', () => {
+  assert.equal(normalizeFingerprint('AA:'.repeat(31) + 'AA'), 'aa'.repeat(32));
+  for (const pin of ['aa'.repeat(31), ':'.repeat(64), 'aa:'.repeat(32), 'gg'.repeat(32)]) assert.throws(() => normalizeFingerprint(pin), { code: 'TLS_PIN' });
+});
+function ephemeralCertificate() {
+  // Generate a self-signed test certificate in memory. No embedded or downloaded private key.
+  const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  function der(tag, value) {
+    const b = Buffer.from(value); let n = b.length, len;
+    if (n < 128) len = Buffer.from([n]);
+    else { const bytes = []; while (n) { bytes.unshift(n & 255); n >>>= 8; } len = Buffer.from([128 | bytes.length, ...bytes]); }
+    return Buffer.concat([Buffer.from([tag]), len, b]);
+  }
+  const seq = (...parts) => der(48, Buffer.concat(parts));
+  const algorithm = seq(Buffer.from('06092a864886f70d01010b0500', 'hex'));
+  const name = seq(der(49, seq(Buffer.from('0603550403', 'hex'), der(12, Buffer.from('localhost')))));
+  const validity = seq(der(23, Buffer.from('250101000000Z')), der(23, Buffer.from('350101000000Z')));
+  const tbs = seq(der(160, der(2, [2])), der(2, [1]), algorithm, name, validity, name, pair.publicKey.export({ format: 'der', type: 'spki' }));
+  const bytes = seq(tbs, algorithm, der(3, Buffer.concat([Buffer.from([0]), sign('RSA-SHA256', tbs, pair.privateKey)])));
+  const pem = label => `-----BEGIN ${label}-----\n${bytes.toString('base64').match(/.{1,64}/g).join('\n')}\n-----END ${label}-----`;
+  return { key: pair.privateKey.export({ format: 'pem', type: 'pkcs8' }), cert: pem('CERTIFICATE'), fingerprint: createHash('sha256').update(bytes).digest('hex') };
+}
+test('real TLS pin mismatch sends ZERO HTTP requests/tokens; matching certificate upgrades', async t => {
+  const certificate = ephemeralCertificate(); let requests = 0; const sockets = new Set();
+  const server = https.createServer({ key: certificate.key, cert: certificate.cert });
+  server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  server.on('tlsClientError', () => {});
+  server.on('upgrade', (req, socket) => {
+    requests++;
+    const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { for (const socket of sockets) socket.destroy(); server.close(resolve); }));
+  const url = `wss://127.0.0.1:${server.address().port}/?token=TEST_ONLY`;
+  await assert.rejects(new JsonSocket(url, { fingerprint: '00'.repeat(32) }).connect(), { code: 'TLS_PIN' }); assert.equal(requests, 0);
+  const client = new JsonSocket(url, { fingerprint: certificate.fingerprint }); await client.connect(); assert.equal(requests, 1); client.close();
 });
 async function mockTv(t, onMessage, { badHandshake = false } = {}) {
   const server = http.createServer(); const sockets = new Set();

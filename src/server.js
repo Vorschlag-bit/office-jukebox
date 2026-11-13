@@ -6,11 +6,15 @@ import { check, equalSecret, AppError } from './util.js';
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/player': ['player.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/player.js': ['player.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
 async function readJson(req) {
-  let data = '', size = 0;
-  for await (const chunk of req) { size += chunk.length; check(size <= 8192, 'BODY_SIZE', '요청 크기가 너무 큽니다.', 413); data += chunk; }
-  try { return JSON.parse(data || '{}'); } catch { throw new AppError('JSON', '올바른 JSON이 필요합니다.'); }
+  const chunks = []; let size = 0;
+  for await (const chunk of req) { size += chunk.length; check(size <= 8192, 'BODY_SIZE', '요청 크기가 너무 큽니다.', 413); chunks.push(chunk); }
+  const data = Buffer.concat(chunks).toString('utf8');
+  let body;
+  try { body = JSON.parse(data || '{}'); } catch { throw new AppError('JSON', '올바른 JSON이 필요합니다.'); }
+  check(body && typeof body === 'object' && !Array.isArray(body), 'JSON', 'JSON 객체가 필요합니다.');
+  return body;
 }
-export function createServer({ engine, config }) {
+export function createServer({ engine, config, diagnostics = () => ({}) }) {
   const buckets = new Map();
   return http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -36,12 +40,19 @@ export function createServer({ engine, config }) {
       check(bucket.count <= 180, 'RATE_LIMIT', '요청이 너무 많습니다.', 429);
       if (buckets.size > 1000) for (const [key, item] of buckets) if (Date.now() - item.since > 60000) buckets.delete(key);
       if (req.method === 'GET' && url.pathname === '/api/state') return send(200, engine.snapshot());
+      if (req.method === 'GET' && url.pathname === '/api/diagnostics') return send(200, { ...diagnostics(), queue: engine.state.queue.length, status: engine.state.current?.status || 'idle', notifications: { pending: engine.state.outbox.length, failed: engine.state.deadLetters?.length || 0 }, adapter: engine.adapter.info() });
       check(req.method === 'POST', 'METHOD', 'POST 요청이 필요합니다.', 405);
       // No CORS and no credentials in query strings. Reject cross-origin browser writes.
       if (req.headers.origin) check(req.headers.origin === `http://${req.headers.host}` || req.headers.origin === `https://${req.headers.host}`, 'ORIGIN', '다른 사이트에서의 요청은 허용하지 않습니다.', 403);
       check(req.headers['content-type']?.startsWith('application/json'), 'CONTENT_TYPE', 'application/json을 사용하세요.', 415);
       const body = await readJson(req);
       if (url.pathname === '/api/command') return send(200, { text: await engine.command({ text: body.text, operator: true, user: 'local-admin' }) });
+      if (url.pathname === '/api/retry-notifications') return send(200, await engine.serial(async () => {
+        const failed = engine.state.deadLetters || [];
+        check(engine.state.outbox.length + failed.length <= 500, 'OUTBOX_FULL', '대기 알림이 많습니다. 먼저 기존 알림을 처리하세요.');
+        for (const item of failed) { const { failure, failedAt, ...reply } = item; engine.state.outbox.push({ ...reply, attempts: 0, nextAttemptAt: 0 }); }
+        engine.state.deadLetters = []; engine.store.save(); return { requeued: failed.length };
+      }));
       if (url.pathname === '/api/player/poll') return send(200, await engine.heartbeat(body.clientId));
       if (url.pathname === '/api/player/event') return send(200, await engine.playerEvent(body));
       throw new AppError('NOT_FOUND', '없는 경로입니다.', 404);

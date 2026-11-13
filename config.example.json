@@ -7,6 +7,9 @@
   "dataDir": "data",
   "maxQueue": 50,
   "queueTtlMs": 14400000,
+  "perUserLimit": 5,
+  "autoSkipUnplayable": true,
+  "handshakeTimeoutMs": 45000,
   "adapter": { "type": "browser" },
   "google": {
     "enabled": false,

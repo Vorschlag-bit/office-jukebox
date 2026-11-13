@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { JsonSocket } from './socket.js';
 import { check, jsonFetch, watchUrl } from './util.js';
+import { LoungeAdapter } from './lounge.js';
 
 export class BrowserAdapter {
   type = 'browser';
@@ -84,6 +85,7 @@ export function createAdapter(config, dependencies = {}) {
     case 'samsung': return new SamsungAdapter(config, dependencies);
     case 'lg': return new LgAdapter(config, dependencies);
     case 'android-ha': return new AndroidHaAdapter(config, dependencies);
+    case 'lounge': return new LoungeAdapter(config, dependencies);
     default: throw new Error(`지원하지 않는 재생 방식: ${config.type}. 일반 모니터는 browser + HDMI를 사용하세요.`);
   }
 }

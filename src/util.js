@@ -11,10 +11,34 @@ export function equalSecret(a, b) {
   return x.length === y.length && x.length > 0 && timingSafeEqual(x, y);
 }
 export async function jsonFetch(url, options = {}, fetcher = fetch) {
-  const response = await fetcher(url, { ...options, signal: options.signal || AbortSignal.timeout(12000) });
-  if (!response.ok) throw new AppError('UPSTREAM', `외부 서비스 응답 오류: HTTP ${response.status}`, 502);
+  let response;
+  try { response = await fetcher(url, { ...options, signal: options.signal || AbortSignal.timeout(12000) }); }
+  catch { throw new AppError('NETWORK', '외부 서비스 연결에 실패했습니다. 잠시 후 재시도하세요.', 502); }
+  if (!response.ok) {
+    const error = new AppError('UPSTREAM', `외부 서비스 응답 오류: HTTP ${response.status}`, 502);
+    error.upstreamStatus = response.status;
+    throw error;
+  }
   if (response.status === 204) return {};
-  return response.json();
+  try { return response.text ? JSON.parse(await boundedText(response)) : await response.json(); }
+  catch (e) { if (e instanceof AppError) throw e; throw new AppError('UPSTREAM_FORMAT', '외부 서비스에서 잘못된 JSON을 반환했습니다.', 502); }
+}
+export async function boundedText(response, maxBytes = 1048576) {
+  if (!response.body?.getReader) {
+    const result = await response.text();
+    check(Buffer.byteLength(result) <= maxBytes, 'UPSTREAM_SIZE', '외부 서비스 응답 크기 초과', 502);
+    return result;
+  }
+  const reader = response.body.getReader(); const chunks = []; let bytes = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      bytes += value.byteLength;
+      check(bytes <= maxBytes, 'UPSTREAM_SIZE', '외부 서비스 응답 크기 초과', 502);
+      chunks.push(Buffer.from(value));
+    }
+  } finally { await reader.cancel().catch(() => {}); }
+  return Buffer.concat(chunks).toString('utf8');
 }
 export const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const videoIdPattern = /^[A-Za-z0-9_-]{11}$/;

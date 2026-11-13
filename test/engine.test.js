@@ -29,6 +29,7 @@ test('browser heartbeat dispatches; playing event is the only confirmation', asy
 test('ended advances queue and stale ended event cannot skip new song', async () => {
   const { engine } = setup(); await engine.heartbeat('client-1234'); await add(engine); await add(engine);
   const sessionId = engine.state.current.sessionId;
+  await engine.playerEvent({ clientId: 'client-1234', sessionId, event: 'playing' });
   await engine.playerEvent({ clientId: 'client-1234', sessionId, event: 'ended' });
   assert.notEqual(engine.state.current.sessionId, sessionId); assert.equal(engine.state.queue.length, 0);
   await assert.rejects(engine.playerEvent({ clientId: 'client-1234', sessionId, event: 'ended' }), { code: 'STALE' });

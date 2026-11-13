@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { check } from './util.js';
 
 export class Engine {
-  constructor({ store, youtube, adapter, now = Date.now, maxQueue = 50, queueTtlMs = 14400000 }) {
-    Object.assign(this, { store, youtube, adapter, now, maxQueue, queueTtlMs });
+  constructor({ store, youtube, adapter, now = Date.now, maxQueue = 50, queueTtlMs = 14400000, perUserLimit = 0, autoSkipUnplayable = false, handshakeTimeoutMs = 45000 }) {
+    Object.assign(this, { store, youtube, adapter, now, maxQueue, queueTtlMs, perUserLimit, autoSkipUnplayable, handshakeTimeoutMs });
     this.chain = Promise.resolve();
     this.player = null;
+    this.consecutiveFailures = 0;
+    this.adapter.setListener?.(event => { void this.nativeEvent(event).catch(() => {}); });
     if (this.state.current) { this.state.current.status = 'recovery_required'; store.save(); }
   }
   get state() { return this.store.state; }
@@ -15,7 +17,10 @@ export class Engine {
     return result;
   }
   snapshot() {
-    return structuredClone({ queue: this.state.queue, current: this.state.current, history: this.state.history.slice(-10), adapter: this.adapter.info(), player: this.player ? { online: this.now() - this.player.lastSeen < 15000 } : { online: false } });
+    return structuredClone({ queue: this.state.queue, current: this.state.current, history: this.state.history.slice(-10), paused: !!this.state.paused, adapter: this.adapter.info(), notifications: { pending: this.state.outbox.length, failed: this.state.deadLetters?.length || 0 }, player: this.player ? { online: this.now() - this.player.lastSeen < 15000 } : { online: false } });
+  }
+  notify(text, track = this.state.current) {
+    if (track?.requestSpace && this.state.outbox.length < 500) this.state.outbox.push({ id: randomUUID(), space: track.requestSpace, thread: track.requestThread, text });
   }
   archive(status, error) {
     if (!this.state.current) return;
@@ -25,16 +30,18 @@ export class Engine {
   }
   expire() {
     const stale = this.state.queue.filter(x => x.expiresAt <= this.now());
+    if (!stale.length) return false;
     this.state.queue = this.state.queue.filter(x => x.expiresAt > this.now());
     this.state.history.push(...stale.map(x => ({ ...x, status: 'expired', finishedAt: this.now() })));
     this.state.history = this.state.history.slice(-100);
+    return true;
   }
   async dispatch() {
-    this.expire();
-    if (this.state.current || !this.state.queue.length) { this.store.save(); return; }
-    if (this.adapter.type === 'browser' && (!this.player || this.now() - this.player.lastSeen >= 15000)) { this.store.save(); return; }
+    const expired = this.expire();
+    if (this.state.current || this.state.paused || !this.state.queue.length) { if (expired) this.store.save(); return; }
+    if (this.adapter.type === 'browser' && (!this.player || this.now() - this.player.lastSeen >= 15000)) { if (expired) this.store.save(); return; }
     const track = this.state.queue.shift();
-    this.state.current = { ...track, sessionId: randomUUID(), status: 'dispatching', dispatchedAt: this.now() };
+    this.state.current = { ...track, sessionId: randomUUID(), status: 'dispatching', dispatchedAt: this.now(), desiredState: 'playing', controlVersion: 0, observedPlaying: false };
     // Persist before the external side effect: restart requires explicit recovery, never blindly replays.
     this.store.save();
     try {
@@ -44,24 +51,64 @@ export class Engine {
       // Keep the item for explicit retry; a transport timeout may mean the TV did receive it.
       this.state.current.status = 'error';
       this.state.current.error = e.code || 'DEVICE_ERROR';
+      this.notify(`재생 요청 실패: ${track.title} [${this.state.current.error}]. 상태를 확인하고 재시도 또는 다음을 선택하세요.`);
     }
     this.store.save();
   }
   async command({ text, user = 'local', operator = false, eventId, space, thread }) {
     return this.serial(async () => {
-      if (eventId && this.state.seen[eventId]) return this.state.seen[eventId].reply;
+      if (eventId && Object.hasOwn(this.state.seen, eventId)) return this.state.seen[eventId].reply;
       check(typeof text === 'string' && text.length <= 500, 'COMMAND', '명령은 500자 이내여야 합니다.');
       const [verb = '', ...parts] = text.trim().split(/\s+/);
       const arg = parts.join(' ');
       let reply;
+      const append = async song => {
+        check(this.state.queue.length < this.maxQueue, 'QUEUE_FULL', '대기열이 가득 찼습니다.');
+        check(this.state.outbox.length < 500, 'NOTIFICATIONS_FULL', 'Chat 응답이 누적됐습니다. 운영자가 알림 상태를 확인해야 합니다.', 503);
+        check(!this.perUserLimit || this.state.queue.filter(x => x.requestedBy === user).length < this.perUserLimit, 'USER_LIMIT', `한 사람은 대기곡을 ${this.perUserLimit}개까지 신청할 수 있습니다.`);
+        this.state.queue.push({ ...song, id: randomUUID(), requestedBy: user, addedAt: this.now(), expiresAt: this.now() + this.queueTtlMs, requestSpace: space, requestThread: thread });
+        reply = `신청 접수: ${song.title}. 대기열에 추가했습니다. 재생 여부는 상태 명령으로 확인하세요.`;
+      };
       if (['재생', '추가', 'play', 'add'].includes(verb.toLowerCase())) {
         check(this.state.queue.length < this.maxQueue, 'QUEUE_FULL', '대기열이 가득 찼습니다.');
-        const song = await this.youtube.resolve(arg, this.adapter.type === 'browser');
-        this.state.queue.push({ ...song, id: randomUUID(), requestedBy: user, addedAt: this.now(), expiresAt: this.now() + this.queueTtlMs });
-        reply = `신청 접수: ${song.title}. 대기열에 추가했습니다. 재생 여부는 상태 명령으로 확인하세요.`;
+        check(!this.perUserLimit || this.state.queue.filter(x => x.requestedBy === user).length < this.perUserLimit, 'USER_LIMIT', `한 사람은 대기곡을 ${this.perUserLimit}개까지 신청할 수 있습니다.`);
+        await append(await this.youtube.resolve(arg, this.adapter.type === 'browser'));
+      } else if (['검색', 'search'].includes(verb.toLowerCase())) {
+        const songs = await this.youtube.search(arg, this.adapter.type === 'browser');
+        this.state.candidates ||= {};
+        for (const key of Object.keys(this.state.candidates)) if (this.state.candidates[key].expiresAt <= this.now()) delete this.state.candidates[key];
+        check(Object.keys(this.state.candidates).length < 100 || this.state.candidates[user], 'CANDIDATES_FULL', '검색 사용자가 많습니다. 잠시 후 다시 시도하세요.');
+        this.state.candidates[user] = { songs, space, expiresAt: this.now() + 300000 };
+        reply = songs.map((x, i) => `${i + 1}. ${x.title}`).join('\n') + '\n5분 이내에 선택 <번호>를 보내세요.';
+      } else if (['선택', 'select'].includes(verb.toLowerCase())) {
+        const choice = this.state.candidates?.[user];
+        check(choice && choice.expiresAt > this.now() && choice.space === space, 'CHOICE_EXPIRED', '검색 결과가 만료됐거나 다른 채팅방의 결과입니다. 다시 검색하세요.');
+        check(/^[1-5]$/.test(arg) && choice.songs[Number(arg) - 1], 'CHOICE', '검색 결과의 번호를 선택하세요.');
+        await append(choice.songs[Number(arg) - 1]); delete this.state.candidates[user];
+      } else if (['취소', 'cancel'].includes(verb.toLowerCase())) {
+        check(/^[1-9][0-9]*$/.test(arg) || /^id:[a-f0-9-]{36}$/.test(arg), 'CANCEL', '대기열에 표시된 곡 번호를 입력하세요.');
+        const index = arg.startsWith('id:') ? this.state.queue.findIndex(x => x.id === arg.slice(3)) : Number(arg) - 1, song = this.state.queue[index];
+        check(song, 'CANCEL', '해당 대기곡이 없습니다.');
+        check(operator || song.requestedBy === user, 'FORBIDDEN', '본인의 신청곡만 취소할 수 있습니다.', 403);
+        this.state.queue.splice(index, 1); reply = `신청 취소: ${song.title}`;
+      } else if (['일시정지', 'pause', '계속', 'resume'].includes(verb.toLowerCase())) {
+        check(operator, 'FORBIDDEN', '운영자만 실행할 수 있는 명령입니다.', 403);
+        const pause = ['일시정지', 'pause'].includes(verb.toLowerCase());
+        if (this.state.current) {
+          check(!['error', 'recovery_required'].includes(this.state.current.status), 'RECOVERY', '오류 또는 복구 상태에서는 재시도 또는 다음을 사용하세요.');
+          if (this.adapter.type !== 'browser') {
+            check(typeof this.adapter[pause ? 'pause' : 'resume'] === 'function', 'UNSUPPORTED', '이 어댑터는 일시정지/계속을 지원하지 않습니다.');
+            await this.adapter[pause ? 'pause' : 'resume']();
+          }
+          this.state.current.desiredState = pause ? 'paused' : 'playing';
+          this.state.current.controlVersion = (this.state.current.controlVersion || 0) + 1;
+        }
+        this.state.paused = pause;
+        if (!pause) this.consecutiveFailures = 0;
+        reply = pause ? '일시정지를 요청했습니다. 다음 곡 자동 시작도 보류합니다.' : '재생 계속을 요청했습니다.';
       } else if (['대기열', 'queue', '상태', 'status'].includes(verb.toLowerCase())) {
         const current = this.state.current;
-        reply = `현재: ${current ? `${current.title} [${current.status}]` : '없음'}\n대기: ${this.state.queue.map((x, i) => `${i + 1}. ${x.title}`).join('\n') || '없음'}`;
+        reply = `현재: ${current ? `${current.title} [${current.status}]` : '없음'}${this.state.paused ? ' · 대기열 일시정지' : ''}\n대기: ${this.state.queue.map((x, i) => `${i + 1}. ${x.title}`).join('\n') || '없음'}`;
       } else if (['다음', 'next', '정지', 'stop', '재시도', 'retry', '확인', 'confirm'].includes(verb.toLowerCase())) {
         check(operator, 'FORBIDDEN', '운영자만 실행할 수 있는 명령입니다.', 403);
         if (['확인', 'confirm'].includes(verb.toLowerCase())) {
@@ -74,19 +121,23 @@ export class Engine {
           check(this.state.current, 'NO_CURRENT', '재시도할 곡이 없습니다.');
           check(['error', 'recovery_required'].includes(this.state.current.status), 'STATE', '오류 또는 재시작 복구 상태에서만 재시도할 수 있습니다.');
           await this.adapter.stop();
-          this.state.queue.unshift({ ...this.state.current, expiresAt: this.now() + this.queueTtlMs });
+          const { sessionId, status, error, dispatchedAt, confirmation, observedPlaying, notifiedPlaying, ...song } = this.state.current;
+          this.state.queue.unshift({ ...song, expiresAt: this.now() + this.queueTtlMs });
           this.state.current = null;
+          this.consecutiveFailures = 0;
           reply = '재시도를 접수했습니다.';
         } else {
           await this.adapter.stop(); // On failure preserve state rather than falsely reporting stopped.
           const stop = ['정지', 'stop'].includes(verb.toLowerCase());
           this.archive(stop ? 'stopped' : 'skipped');
           if (stop) this.state.queue = [];
+          if (stop) this.state.paused = false;
+          this.consecutiveFailures = 0;
           reply = stop ? '정지 명령 전송 및 대기열 비움 완료. 기본 앱은 현장 정지를 확인하세요.' : '다음 곡으로 이동합니다.';
         }
-      } else reply = '명령: 재생 <곡명/유튜브 URL> · 대기열 · 상태 · 다음 · 정지 · 재시도 · 확인. 검색은 첫 번째 결과를 신청합니다.';
+      } else reply = '명령: 추가 <곡명/URL> · 검색 <곡명> · 선택 <번호> · 취소 <대기번호> · 대기열 · 상태 · 다음 · 정지 · 일시정지 · 계속 · 재시도 · 확인. 추가는 검색 첫 결과를 신청합니다.';
       if (eventId) {
-        this.state.seen[eventId] = { reply, at: this.now() };
+        Object.defineProperty(this.state.seen, eventId, { value: { reply: reply.slice(0, 4000), at: this.now() }, writable: true, enumerable: true, configurable: true });
         // Bound deduplication storage; delivery TTL and Pub/Sub retention are separate concerns.
         const keys = Object.keys(this.state.seen);
         for (const key of keys.slice(0, Math.max(0, keys.length - 5000))) delete this.state.seen[key];
@@ -103,21 +154,67 @@ export class Engine {
       check(typeof clientId === 'string' && /^[A-Za-z0-9-]{8,80}$/.test(clientId), 'CLIENT', '올바르지 않은 재생기 ID');
       check(!this.player || this.player.id === clientId || this.now() - this.player.lastSeen >= 15000, 'LEASE', '다른 브라우저가 재생 중입니다.', 409);
       // A replacement tab must not replay an existing item without operator recovery.
-      if (this.player && (this.player.id !== clientId || this.now() - this.player.lastSeen >= 15000) && this.state.current) this.state.current.status = 'recovery_required';
+      if (this.player && (this.player.id !== clientId || this.now() - this.player.lastSeen >= 15000) && this.state.current) { this.state.current.status = 'recovery_required'; this.store.save(); }
       this.player = { id: clientId, lastSeen: this.now() };
       await this.dispatch();
       return this.snapshot();
     });
   }
-  async playerEvent({ clientId, sessionId, event }) {
+  async applyPlayback(event, errorCode) {
+    const current = this.state.current;
+    if (current.status === event && event !== 'error') return;
+    if (event === 'ended') {
+      check(current.observedPlaying, 'ENDING_BEFORE_PLAY', '재생 확인 전 종료 이벤트는 무시합니다.', 409);
+      this.consecutiveFailures = 0; this.archive('ended'); await this.dispatch();
+    } else if (event === 'error' && this.autoSkipUnplayable && [100, 101, 150].includes(Number(errorCode))) {
+      this.consecutiveFailures++;
+      this.notify(`이 영상은 재생할 수 없습니다: ${current.title}. ${this.consecutiveFailures >= 3 ? '연속 오류로 대기열을 일시정지합니다.' : '다음 곡을 시도합니다.'}`);
+      this.archive('unplayable', `YOUTUBE_${Number(errorCode)}`);
+      if (this.consecutiveFailures >= 3) this.state.paused = true;
+      await this.dispatch();
+    } else {
+      current.status = event;
+      if (event === 'playing') {
+        this.consecutiveFailures = 0;
+        current.observedPlaying = true;
+        if (!current.notifiedPlaying) { this.notify(`재생 중: ${current.title}`); current.notifiedPlaying = true; }
+      }
+      if (event === 'error') { current.error = errorCode ? `YOUTUBE_${Number(errorCode)}` : 'PLAYER_ERROR'; this.notify(`재생 오류: ${current.title} [${current.error}]`); }
+    }
+    this.store.save();
+  }
+  async playerEvent({ clientId, sessionId, event, errorCode }) {
     return this.serial(async () => {
       check(this.player?.id === clientId && this.now() - this.player.lastSeen < 15000, 'LEASE', '재생기 연결이 만료되었습니다.', 409);
       check(this.state.current?.sessionId === sessionId, 'STALE', '이전 곡의 이벤트입니다.', 409);
       check(['playing', 'paused', 'ended', 'blocked', 'error'].includes(event), 'EVENT', '지원하지 않는 이벤트');
+      check(errorCode === undefined || (Number.isInteger(errorCode) && errorCode >= 0 && errorCode <= 999), 'EVENT', '올바른 숫자 영상 오류 코드가 필요합니다.');
       check(this.state.current.status !== 'recovery_required', 'RECOVERY', '운영자의 재시도 또는 다음 명령이 필요합니다.', 409);
-      if (event === 'ended') { this.archive('ended'); await this.dispatch(); }
-      else { this.state.current.status = event; this.store.save(); }
+      await this.applyPlayback(event, errorCode);
       return this.snapshot();
+    });
+  }
+  async nativeEvent({ sessionId, videoId, event }) {
+    return this.serial(async () => {
+      if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId || ['recovery_required', 'error'].includes(this.state.current.status)) return false;
+      if (event === 'offline' || event === 'external') { this.state.current.status = 'recovery_required'; this.notify(event === 'external' ? 'TV에서 다른 영상으로 변경됐습니다. 대기열을 진행하려면 재시도 또는 다음을 선택하세요.' : '기기 연결이 끊겼습니다. 실제 재생을 확인한 뒤 재시도 또는 다음을 선택하세요.'); this.store.save(); return true; }
+      if (!['playing', 'paused', 'ended', 'buffering'].includes(event)) return false;
+      await this.applyPlayback(event); return true;
+    });
+  }
+  async tick() {
+    return this.serial(async () => {
+      const current = this.state.current;
+      let changed = false;
+      if (current && this.adapter.type === 'browser' && this.player && this.now() - this.player.lastSeen >= 15000 && !['recovery_required', 'error'].includes(current.status)) {
+        current.status = 'recovery_required'; this.notify('재생기 연결이 만료됐습니다. 재연결 후 복구 명령이 필요합니다.');
+        changed = true;
+      } else if (current?.status === 'sent_unconfirmed' && this.now() - current.dispatchedAt >= this.handshakeTimeoutMs) {
+        current.status = 'error'; current.error = 'PLAYBACK_NOT_CONFIRMED'; this.notify(`재생 확인 시간 초과: ${current.title}. 화면과 앱 연결을 확인하세요.`);
+        changed = true;
+      }
+      if (this.expire()) changed = true;
+      if (changed) this.store.save();
     });
   }
 }

@@ -1,8 +1,14 @@
 // Small bounded RFC 6455 client. TV TLS exceptions are scoped to one pinned certificate.
 import http from 'node:http';
 import https from 'node:https';
+import tls from 'node:tls';
 import { randomBytes, createHash } from 'node:crypto';
 import { AppError, check } from './util.js';
+
+export function normalizeFingerprint(value) {
+  check(typeof value === 'string' && /^(?:[a-f\d]{64}|(?:[a-f\d]{2}:){31}[a-f\d]{2})$/i.test(value), 'TLS_PIN', 'TV의 SHA-256 인증서 지문을 먼저 설정하세요.');
+  return value.replaceAll(':', '').toLowerCase();
+}
 
 export function encodeFrame(data, { masked = true, opcode = 1 } = {}) {
   const payload = Buffer.from(data);
@@ -54,21 +60,35 @@ export class JsonSocket {
   async connect() {
     const u = this.url;
     check(['ws:', 'wss:'].includes(u.protocol), 'WS_URL', 'ws 또는 wss 주소가 필요합니다.');
-    if (u.protocol === 'wss:') check(/^[a-fA-F0-9:]{64,95}$/.test(this.fingerprint || ''), 'TLS_PIN', 'TV의 SHA-256 인증서 지문을 먼저 설정하세요.');
+    const pin = u.protocol === 'wss:' ? normalizeFingerprint(this.fingerprint) : null;
     const key = randomBytes(16).toString('base64');
     await new Promise((resolve, reject) => {
       const transport = u.protocol === 'wss:' ? https : http;
-      const request = transport.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET', rejectUnauthorized: u.protocol !== 'wss:', headers: { Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': key } });
-      const timer = setTimeout(() => request.destroy(new Error('연결 시간 초과')), this.timeout);
-      request.on('error', error => { clearTimeout(timer); reject(new AppError('DEVICE_CONNECT', error.message, 502)); });
+      let agent;
+      if (pin) {
+        agent = new https.Agent({ keepAlive: false }); this.agent = agent;
+        agent.createConnection = (options, callback) => {
+          const peer = tls.connect({ ...options, rejectUnauthorized: false });
+          this.connectingSocket = peer;
+          let finished = false;
+          const finish = (error, socket) => { if (finished) return; finished = true; callback(error, socket); };
+          peer.once('error', error => finish(error));
+          peer.once('secureConnect', () => {
+            const actual = peer.getPeerCertificate().fingerprint256?.replaceAll(':', '').toLowerCase();
+            if (actual !== pin) { const error = new AppError('TLS_PIN', 'TV 인증서 지문이 일치하지 않습니다.'); finish(error); peer.destroy(); }
+            else finish(null, peer);
+          });
+          // Return no socket until identity has been checked. No HTTP headers/token can leave early.
+          return undefined;
+        };
+      }
+      const request = transport.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET', ...(agent ? { agent } : {}), headers: { Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': key } });
+      const timer = setTimeout(() => { this.connectingSocket?.destroy(); request.destroy(new Error('연결 시간 초과')); }, this.timeout);
+      request.on('error', error => { clearTimeout(timer); agent?.destroy(); reject(error instanceof AppError ? error : new AppError('DEVICE_CONNECT', '기기에 연결하지 못했습니다.', 502)); });
       request.on('response', response => { response.resume(); request.destroy(); clearTimeout(timer); reject(new AppError('WS_UPGRADE', `기기가 WebSocket 연결을 거부했습니다: ${response.statusCode}`, 502)); });
       request.on('upgrade', (response, socket, head) => {
         clearTimeout(timer);
         try {
-          if (u.protocol === 'wss:') {
-            const actual = socket.getPeerCertificate().fingerprint256?.replaceAll(':', '').toLowerCase();
-            check(actual === this.fingerprint.replaceAll(':', '').toLowerCase(), 'TLS_PIN', 'TV 인증서 지문이 일치하지 않습니다.');
-          }
           const expected = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
           check(response.headers['sec-websocket-accept'] === expected, 'WS_HANDSHAKE', 'WebSocket 핸드셰이크 불일치');
           this.socket = socket;
@@ -117,6 +137,7 @@ export class JsonSocket {
   close(error = new AppError('DEVICE_CLOSED', '기기 연결 종료', 502)) {
     const socket = this.socket; this.socket = null;
     socket?.destroy();
+    this.connectingSocket?.destroy(); this.agent?.destroy();
     for (const waiter of [...this.pending]) waiter.reject(error);
   }
 }

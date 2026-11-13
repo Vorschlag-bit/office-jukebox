@@ -12,17 +12,19 @@ function refresh() {
     document.getElementById('mode').textContent = s.adapter.type;
     document.getElementById('status').textContent = s.current ? names[s.current.status] || s.current.status : s.adapter.type === 'browser' && !s.player.online ? '재생 화면이 연결되지 않았습니다. 신청곡은 대기열에 보관합니다.' : '신청곡을 기다리고 있습니다.';
     var queue = document.getElementById('queue'); queue.textContent = '';
-    s.queue.forEach(function (song) { var li = document.createElement('li'); li.textContent = song.title; queue.appendChild(li); });
+    s.queue.forEach(function (song) { var li = document.createElement('li'); li.textContent = song.title + ' '; var cancel = document.createElement('button'); cancel.className = 'secondary'; cancel.textContent = '취소'; cancel.onclick = function () { command('취소 id:' + song.id); }; li.appendChild(cancel); queue.appendChild(li); });
     document.getElementById('empty').hidden = s.queue.length > 0;
+    document.getElementById('notifications').textContent = (s.paused ? '대기열 일시정지 · ' : '') + 'Chat 알림 대기 ' + s.notifications.pending + ' / 전송 실패 ' + s.notifications.failed;
   });
 }
 function feedback(text) { document.getElementById('feedback').textContent = text; }
-function command(text) { return api('/api/command', { text: text }).then(function (r) { feedback(r.text); return refresh(); }).catch(function (e) { feedback(e.message); }); }
+function command(text) { return api('/api/command', { text: text }).then(function (r) { feedback(r.text); return refresh().then(function () { return r.text; }); }).catch(function (e) { feedback(e.message); return null; }); }
 function connect() {
   token = document.getElementById('token').value || token;
   refresh().then(function () { sessionStorage.setItem('jukebox-admin', token); clearInterval(timer); timer = setInterval(function () { refresh().catch(function (e) { feedback(e.message); }); }, 3000); }).catch(function (e) { alert(e.message); });
 }
 document.getElementById('connect').onclick = connect;
-document.getElementById('request').onsubmit = function (e) { e.preventDefault(); var q = document.getElementById('query'); command('추가 ' + q.value); q.value = ''; };
+document.getElementById('search').onclick = function () { command('검색 ' + document.getElementById('query').value).then(function (text) { document.getElementById('choices').hidden = !text; }); };
+document.getElementById('request').onsubmit = function (e) { e.preventDefault(); var q = document.getElementById('query'); command('추가 ' + q.value).then(function (text) { if (text) q.value = ''; }); };
 Array.prototype.forEach.call(document.querySelectorAll('[data-command]'), function (b) { b.onclick = function () { command(b.getAttribute('data-command')); }; });
 if (token) connect();

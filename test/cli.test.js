@@ -52,9 +52,23 @@ test('actual CLI server starts with generated config and serves authenticated qu
     child.on('error', reject); child.on('exit', code => { if (code !== 0) { clearTimeout(timeout); reject(new Error(`CLI exited: ${code}`)); } });
   });
   assert.equal((await fetch(`${base}/health`)).status, 200);
+  const duplicate = run(); assert.equal(duplicate.status, 1); assert.match(duplicate.stderr, /ALREADY_RUNNING/);
   const response = await fetch(`${base}/api/command`, { method: 'POST', headers: { Authorization: `Bearer ${config.adminToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '추가 https://youtu.be/dQw4w9WgXcQ' }) });
   assert.equal(response.status, 200);
   const state = await (await fetch(`${base}/api/state`, { headers: { Authorization: `Bearer ${config.adminToken}` } })).json();
   assert.equal(state.queue.length, 1); assert.equal(state.current, null);
   await new Promise(resolve => { child.once('exit', resolve); child.kill(); });
+  assert.equal(run('use-browser').status, 0);
+});
+test('CLI backup recovery preserves damaged state and restores only validated backup', t => {
+  const { configFile, run } = fixture(t); run('init'); const dir = join(configFile, '..', 'data');
+  const base = { version: 1, queue: [], current: null, history: [], seen: {}, outbox: [] };
+  const fs = spawnSync(process.execPath, ['--input-type=module', '-e', "import {mkdirSync,writeFileSync} from 'node:fs'; const [dir, state]=process.argv.slice(1); mkdirSync(dir,{recursive:true}); writeFileSync(dir+'/state.json','BROKEN'); writeFileSync(dir+'/state.json.bak',state);", dir, JSON.stringify(base)], { encoding: 'utf8' });
+  assert.equal(fs.status, 0); const restored = run('restore-state'); assert.equal(restored.status, 0); assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'))).version, 1);
+});
+test('CLI fallback mode remembers previous adapter without changing OS settings', t => {
+  const { configFile, run } = fixture(t); run('init'); const config = loadConfig(configFile);
+  config.adapter = { type: 'samsung', url: 'ws://192.0.2.1:8001', experimentalVideoLaunch: true }; writeFileSync(configFile, JSON.stringify(config));
+  assert.equal(run('use-browser').status, 0); assert.equal(loadConfig(configFile).adapter.type, 'browser');
+  assert.equal(run('use-previous').status, 0); assert.equal(loadConfig(configFile).adapter.type, 'samsung');
 });
