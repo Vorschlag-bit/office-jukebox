@@ -1,0 +1,9 @@
+config.local.json
+config.local.json.tmp
+data/
+*.pem
+*service-account*.json
+credentials*.json
+node_modules/
+coverage/
+.env

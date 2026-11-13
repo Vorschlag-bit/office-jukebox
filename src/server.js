@@ -1,0 +1,52 @@
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { check, equalSecret, AppError } from './util.js';
+
+const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
+const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/player': ['player.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/player.js': ['player.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
+async function readJson(req) {
+  let data = '', size = 0;
+  for await (const chunk of req) { size += chunk.length; check(size <= 8192, 'BODY_SIZE', '요청 크기가 너무 큽니다.', 413); data += chunk; }
+  try { return JSON.parse(data || '{}'); } catch { throw new AppError('JSON', '올바른 JSON이 필요합니다.'); }
+}
+export function createServer({ engine, config }) {
+  const buckets = new Map();
+  return http.createServer(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com; frame-src https://www.youtube.com; style-src 'self'; img-src 'self' https://i.ytimg.com; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    const send = (status, value) => { if (!res.headersSent) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); } };
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      if (req.method === 'GET' && assets[url.pathname]) {
+        const [file, mime] = assets[url.pathname];
+        const content = await readFile(`${publicDir}/${file}`); res.writeHead(200, { 'Content-Type': mime }); res.end(content); return;
+      }
+      if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true });
+      check(url.pathname.startsWith('/api/'), 'NOT_FOUND', '없는 경로입니다.', 404);
+      const player = url.pathname.startsWith('/api/player/');
+      const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+      check(equalSecret(bearer, player ? config.playerToken : config.adminToken), 'AUTH', '인증 토큰이 필요합니다.', 401);
+      const ip = req.socket.remoteAddress || 'unknown';
+      const bucket = buckets.get(ip) || { since: Date.now(), count: 0 };
+      if (Date.now() - bucket.since > 60000) { bucket.since = Date.now(); bucket.count = 0; }
+      bucket.count++; buckets.set(ip, bucket);
+      check(bucket.count <= 180, 'RATE_LIMIT', '요청이 너무 많습니다.', 429);
+      if (buckets.size > 1000) for (const [key, item] of buckets) if (Date.now() - item.since > 60000) buckets.delete(key);
+      if (req.method === 'GET' && url.pathname === '/api/state') return send(200, engine.snapshot());
+      check(req.method === 'POST', 'METHOD', 'POST 요청이 필요합니다.', 405);
+      // No CORS and no credentials in query strings. Reject cross-origin browser writes.
+      if (req.headers.origin) check(req.headers.origin === `http://${req.headers.host}` || req.headers.origin === `https://${req.headers.host}`, 'ORIGIN', '다른 사이트에서의 요청은 허용하지 않습니다.', 403);
+      check(req.headers['content-type']?.startsWith('application/json'), 'CONTENT_TYPE', 'application/json을 사용하세요.', 415);
+      const body = await readJson(req);
+      if (url.pathname === '/api/command') return send(200, { text: await engine.command({ text: body.text, operator: true, user: 'local-admin' }) });
+      if (url.pathname === '/api/player/poll') return send(200, await engine.heartbeat(body.clientId));
+      if (url.pathname === '/api/player/event') return send(200, await engine.playerEvent(body));
+      throw new AppError('NOT_FOUND', '없는 경로입니다.', 404);
+    } catch (error) {
+      send(error.status || 500, { error: error.code || 'INTERNAL', message: error.status ? error.message : '내부 오류가 발생했습니다. 서버 로그를 확인하세요.' });
+    }
+  });
+}

@@ -1,0 +1,18 @@
+{
+  "host": "127.0.0.1",
+  "port": 8787,
+  "adminToken": "REPLACE_WITH_RANDOM_TOKEN_AT_LEAST_32_CHARACTERS",
+  "playerToken": "USE_A_DIFFERENT_RANDOM_TOKEN_AT_LEAST_32_CHARACTERS",
+  "youtubeApiKey": "",
+  "dataDir": "data",
+  "maxQueue": 50,
+  "queueTtlMs": 14400000,
+  "adapter": { "type": "browser" },
+  "google": {
+    "enabled": false,
+    "serviceAccountFile": "credentials.local.json",
+    "subscription": "projects/YOUR_PROJECT/subscriptions/jukebox",
+    "allowedSpaces": ["spaces/YOUR_SPACE"],
+    "operatorUsers": ["users/YOUR_USER_ID"]
+  }
+}

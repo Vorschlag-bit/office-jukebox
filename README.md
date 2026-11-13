@@ -190,4 +190,3 @@ Google 요청은 5분 이상 오래되면 폐기합니다. 서비스 중단 중 
 - [Home Assistant Android TV Remote](https://www.home-assistant.io/integrations/androidtv_remote/)
 
 본 저장소는 위 프로젝트의 패키지에 의존하지 않습니다. 통신 형식을 참고해 작은 어댑터를 작성했습니다. 기기 제조사·Google·YouTube와 제휴한 프로젝트가 아닙니다.
-
