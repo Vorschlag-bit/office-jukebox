@@ -20,7 +20,7 @@ export class Engine {
     return structuredClone({ queue: this.state.queue, current: this.state.current, history: this.state.history.slice(-10), paused: !!this.state.paused, adapter: this.adapter.info(), notifications: { pending: this.state.outbox.length, failed: this.state.deadLetters?.length || 0 }, player: this.player ? { online: this.now() - this.player.lastSeen < 15000 } : { online: false } });
   }
   notify(text, track = this.state.current) {
-    if (track?.requestSpace && this.state.outbox.length < 500) this.state.outbox.push({ id: randomUUID(), space: track.requestSpace, thread: track.requestThread, text });
+    if (track?.requestSpace && this.state.outbox.length < 500) this.state.outbox.push({ id: randomUUID(), space: track.requestSpace, user: track.requestedBy, thread: track.requestThread, text });
   }
   archive(status, error) {
     if (!this.state.current) return;
@@ -141,7 +141,7 @@ export class Engine {
         // Bound deduplication storage; delivery TTL and Pub/Sub retention are separate concerns.
         const keys = Object.keys(this.state.seen);
         for (const key of keys.slice(0, Math.max(0, keys.length - 5000))) delete this.state.seen[key];
-        if (space) this.state.outbox.push({ id: randomUUID(), space, thread, text: reply });
+        if (space) this.state.outbox.push({ id: randomUUID(), space, user, thread, text: reply });
       }
       this.store.save();
       await this.dispatch();

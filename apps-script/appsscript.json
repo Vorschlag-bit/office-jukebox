@@ -1,0 +1,8 @@
+{
+  "timeZone": "Asia/Seoul",
+  "runtimeVersion": "V8",
+  "exceptionLogging": "NONE",
+  "dependencies": {},
+  "oauthScopes": [],
+  "chat": {}
+}

@@ -10,12 +10,20 @@
   "perUserLimit": 5,
   "autoSkipUnplayable": true,
   "handshakeTimeoutMs": 45000,
-  "adapter": { "type": "browser" },
+  "adapter": {
+    "type": "browser"
+  },
   "google": {
     "enabled": false,
-    "serviceAccountFile": "credentials.local.json",
-    "subscription": "projects/YOUR_PROJECT/subscriptions/jukebox",
-    "allowedSpaces": ["spaces/YOUR_SPACE"],
-    "operatorUsers": ["users/YOUR_USER_ID"]
+    "transport": "apps-script",
+    "scriptUrl": "",
+    "sharedSecret": "REPLACE_WITH_SEPARATE_RANDOM_SECRET",
+    "pollIntervalMs": 5000,
+    "allowedSpaces": [
+      "spaces/YOUR_SPACE"
+    ],
+    "operatorUsers": [
+      "users/YOUR_USER_ID"
+    ]
   }
 }

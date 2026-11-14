@@ -37,6 +37,21 @@ test('configuration requires nonempty Chat space allowlist when enabled', t => {
   const { configFile, run } = fixture(t); run('init'); const config = loadConfig(configFile);
   config.google.enabled = true; config.google.allowedSpaces = []; writeFileSync(configFile, JSON.stringify(config)); assert.throws(() => loadConfig(configFile), { code: 'CONFIG' });
 });
+
+test('CLI fails closed on legacy metered transport before reading credential files', t => {
+  const { configFile, run } = fixture(t); run('init'); const config = loadConfig(configFile);
+  config.google.enabled = true; config.google.subscription = 'projects/test/subscriptions/test'; config.google.serviceAccountFile = 'does-not-exist.json';
+  writeFileSync(configFile, JSON.stringify(config));
+  assert.throws(() => loadConfig(configFile), { code: 'COST_POLICY' });
+  const result = run('check-google'); assert.equal(result.status, 1); assert.match(result.stderr, /COST_POLICY/); assert.doesNotMatch(result.stderr, /ENOENT/);
+});
+
+test('CLI generates a third distinct bridge secret and rejects token reuse', t => {
+  const { configFile, run } = fixture(t); const result = run('init'); const config = loadConfig(configFile);
+  assert.equal(config.google.sharedSecret.length, 43); assert.notEqual(config.google.sharedSecret, config.adminToken); assert.notEqual(config.google.sharedSecret, config.playerToken); assert.ok(!result.stdout.includes(config.google.sharedSecret));
+  config.google.enabled = true; config.google.scriptUrl = 'https://script.google.com/macros/s/TEST_DEPLOYMENT/exec'; config.google.sharedSecret = config.adminToken;
+  writeFileSync(configFile, JSON.stringify(config)); assert.throws(() => loadConfig(configFile), { code: 'CONFIG' });
+});
 test('probe only accepts supported explicit TV targets; fingerprint requires TLS', async () => {
   await assert.rejects(probe({ type: 'browser' }), { code: 'PROBE' });
   await assert.rejects(probe({ type: 'lg', url: 'ws://192.0.2.10:3000' }, true), { code: 'PROBE' });

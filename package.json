@@ -1,9 +1,17 @@
 {
   "name": "office-jukebox",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Dependency-free Google Chat jukebox for a spare laptop and a smart display",
-  "engines": { "node": ">=24" },
-  "scripts": { "start": "node src/main.js", "supervise": "node bin/run.js", "test": "node --test", "init": "node src/main.js init", "doctor": "node src/main.js doctor" }
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "supervise": "node bin/run.js",
+    "test": "node --test",
+    "init": "node src/main.js init",
+    "doctor": "node src/main.js doctor"
+  }
 }

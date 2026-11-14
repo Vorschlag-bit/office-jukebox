@@ -6,11 +6,11 @@
 2. 생성된 로컬 설정에서 재생 방식을 선택. 빠른 확인은 browser + 노트북 HDMI.
 3. 기본 YouTube 앱은 `pair-tv`를 사용해 본인 화면과 연결하고 현장 확인.
 4. `node src/main.js doctor`로 설정 검사.
-5. Google 설정을 준비했다면 `node src/main.js check-google`로 구독과 허용 공간 접근 검사. 이 검사는 읽기만 수행.
+5. Google 설정을 준비했다면 `node src/main.js check-google`로 Apps Script 배포·공유 비밀·허용 목록 검사. 곡은 추가하지 않으며 nonce 캐시만 기록.
 6. `node src/main.js` 또는 `node bin/run.js`로 실행.
 7. [완료 조건](ACCEPTANCE.md)의 실제 테스트를 실시.
 
-설정의 `perUserLimit` 기본값은 5, 전체 `maxQueue`는 50, 대기곡 만료는 4시간입니다. 숫자 0의 perUserLimit는 사용자별 제한을 해제합니다. YouTube API 키는 YouTube Data API로 제한하고, 서비스 계정에는 필요한 Pub/Sub subscription 권한만 줍니다. 비밀번호, 키, 쿠키를 코드에 넣지 않습니다.
+설정의 `perUserLimit` 기본값은 5, 전체 `maxQueue`는 50, 대기곡 만료는 4시간입니다. 숫자 0의 perUserLimit는 사용자별 제한을 해제합니다. YouTube API 키는 YouTube Data API로 제한하고, Cloud 프로젝트에는 결제 계정을 연결하지 않습니다. 서비스 계정 키는 사용하지 않습니다. 비밀번호, 키, 쿠키를 코드에 넣지 않습니다.
 
 ## 매일 확인
 
@@ -31,9 +31,9 @@
 | `ALREADY_RUNNING` | 같은 저장소를 사용하는 기존 서버를 종료. 다른 프로세스를 임의로 종료하지 않음 |
 | `LOCK` | 손상 잠금 파일. 서버가 실행 중이지 않음을 확인한 뒤 별도 보관 후 재시작 |
 | 저장소 손상 | 서버 종료 후 `node src/main.js restore-state` 실행 |
-| Google 401 | 서비스 계정/키/시간 설정 확인. 토큰 캐시는 만료/401 시 갱신 |
-| Google 403/404 | API 활성화, 앱 프로젝트, 서비스 계정 IAM, 앱의 공간 참여, 허용 space ID 확인 |
-| Google 429/5xx | 지수 백오프 재시도. 로컬 제어와 Pub/Sub 수신은 계속 |
+| BRIDGE_REJECTED | 공유 비밀·양쪽 시계·단일 worker 확인. 재시작 후 임대 만료까지 최대 45초 |
+| BRIDGE_HTTP/FORMAT | 웹 앱 /exec 배포·Anyone 접근·조직 정책·할당량 확인 |
+| 중계 일시 중단 | 지수 백오프. 로컬 관리 화면은 계속 사용. 처리 5분 지난 새 명령은 재전송 필요 |
 
 `restore-state`는 `state.json.bak`를 검증하고 원래 파일을 `state.json.damaged-타임스탬프.json`으로 보존한 뒤 복원합니다. 백업보다 최근의 신청/알림은 복원되지 않을 수 있습니다. 서버 재시작 후 현재 곡은 복구 대기 상태입니다.
 
@@ -49,7 +49,7 @@ Content-Type: application/json
 {}
 ```
 
-원래 메시지 ID를 유지하므로 이미 전송된 응답은 409로 안전하게 정리됩니다. 전송 실패 기록은 최근 100개로 제한되며 이를 넘은 오래된 알림은 복구할 수 없습니다. 자동 장애 이력 보관 시스템은 아닙니다.
+원래 결과 ID를 유지하며 중계의 최근 영수증으로 중복 결과를 억제합니다. 오래된 v0.2 응답에 수신자 ID가 없으면 다시 격리되므로 삭제/보관 후 새 명령을 보내세요. 전송 실패 기록은 최근 100개로 제한되며 이를 넘은 오래된 알림은 복구할 수 없습니다. 자동 장애 이력 보관 시스템은 아닙니다.
 
 ## 재생 경로 전환
 

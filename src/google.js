@@ -76,7 +76,7 @@ export class GoogleWorker {
         if (Object.hasOwn(this.engine.state.seen, eventId)) return;
         const id = createHash('sha256').update(eventId).digest('hex').slice(0, 32);
         Object.defineProperty(this.engine.state.seen, eventId, { value: { reply: e.message, at: this.now() }, writable: true, enumerable: true, configurable: true });
-        this.engine.state.outbox.push({ id, space: command.space, thread: command.thread, text: e.message });
+        this.engine.state.outbox.push({ id, space: command.space, user: command.user, thread: command.thread, text: e.message });
         this.engine.store.save();
       });
     }

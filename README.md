@@ -4,7 +4,9 @@ Google Chat 명령으로 유튜브 영상을 공유 화면에서 재생하는 �
 
 **Node.js 24 이상만 필요합니다. Python, npm 설치, 외부 Node 패키지가 필요하지 않습니다.**
 
-> **v0.2:** TV 코드 연결을 통한 기본 유튜브 앱 제어와 조건부 자동 대기열, 장애 복구·저장 보호·알림 재시도를 추가했습니다. 현재 실제 TV와 실제 Google 계정 연동은 검증하지 않았습니다. 자동 테스트 성공을 모든 모델의 재생 성공으로 해석하지 마세요.
+> **v0.3:** Apps Script 중계로 전환했습니다. 결제 미연결 프로젝트에서 사용하며 Pub/Sub 실행 경로는 차단합니다. 서비스 계정 키와 추가 OAuth 범위가 필요 없습니다. 실제 Google 배포·TV 호환성은 사용자 환경에서 확인해야 합니다.
+
+**지금 Chat에 연결하는 순서: [Apps Script 상세 가이드](docs/APPS-SCRIPT.md).**
 
 | 원하는 방식 | 선택 | 자동 다음 곡 |
 |---|---|---|
@@ -36,13 +38,13 @@ node src/main.js
 
 ## 구현된 기능
 
-- Google Chat의 대화형 앱 → Pub/Sub pull 수신 → 노트북에서 실행. 공개 서버나 포트포워딩 불필요.
+- Google Chat → Apps Script 대기열 ← 노트북의 서명된 HTTPS pull. 노트북 공개 서버·포트포워딩 불필요.
 - 기존 Chat interaction 이벤트와 Workspace add-on의 `chat.messagePayload` 형식 처리.
 - 채팅방 허용 목록, Google 사용자 ID 기반 운영자 권한, 오래된 요청 폐기.
 - YouTube Data API 검색, 1시간/200개 검색 캐시, 직접 URL 신청.
 - 디스크 대기열, 동시 요청 직렬화, 메시지 중복 처리 방지, 재시작 복구.
-- Chat 응답용 영속 outbox와 결정적인 메시지 ID로 재전송 중복 방지.
-- Chat 응답 장애와 명령 수신 분리, 지수 백오프, 영구 오류 격리 및 관리자 재시도 API.
+- 처리 결과 영속 outbox와 중계 결과 ID로 재수신 중복 억제. Chat의 `결과` 명령으로 조회.
+- 결과 전달 장애와 명령 수신 분리, 지수 백오프, 잘못된 수신자 격리 및 관리자 재시도 API.
 - 실제 재생 시작·기기 오류 알림, 검색 선택, 본인 신청 취소, 사용자별 대기곡 제한.
 - 브라우저/HDMI용 공식 YouTube IFrame 플레이어와 종료 이벤트 기반 다음 곡.
 - 곡별 플레이어 이벤트 격리, 상태 전송 재시도, 재생 확인 시간 초과 감지, 불가 영상 건너뛰기와 연속 오류 시 일시정지.
@@ -57,8 +59,8 @@ node src/main.js
 
 ```text
 Google Chat 대화형 앱
-  → Google Cloud Pub/Sub
-  ← 로컬 노트북의 pull worker
+  → Apps Script (ScriptProperties 큐, OAuth 범위 없음)
+  ← 로컬 노트북의 HMAC 서명 pull worker (기본 5초)
      ├─ YouTube 검색
      ├─ JSON 디스크 대기열 / Chat 응답 outbox
      └─ 재생 어댑터
@@ -78,6 +80,7 @@ GitHub는 소스 저장과 CI 테스트를 담당합니다. 기기 제어 프로
 | 명령 | 동작 | 권한 |
 |---|---|---|
 | `추가 <URL/곡명>` 또는 `재생 <URL/곡명>` | 대기열에 신청. 재생 중이면 끼어들지 않음 | 허용 채팅방 사용자 |
+| `내정보`, `결과` | Chat의 현재 ID / 본인의 최신 처리 결과 확인 | 스페이스 참여자 / 허용 스페이스 사용자 |
 | `대기열`, `상태` | 현재 상태와 대기 곡 확인 | 허용 채팅방 사용자 |
 | `검색 <곡명>`, `선택 <번호>` | 후보 최대 5개 검색, 같은 사용자·채팅방에서 5분 안에 선택 | 허용 채팅방 사용자 |
 | `취소 <대기번호>` | 자신의 대기곡 취소. 관리 UI는 고정 곡 ID를 사용 | 신청자 또는 운영자 |
@@ -87,7 +90,7 @@ GitHub는 소스 저장과 CI 테스트를 담당합니다. 기기 제어 프로
 | `재시도` | 오류/재시작 복구 상태의 곡을 다시 요청 | 운영자 |
 | `확인` | 기본 앱에서 실제 재생을 현장에서 확인한 것으로 기록 | 운영자 |
 
-접수 응답과 실제 재생은 구분합니다. 브라우저와 TV 코드 방식은 실제 이벤트를 받아 `playing`으로 전환하고 원래 Chat 스레드에 재생 알림을 보냅니다. 기존 기기별 앱 실행은 `sent_unconfirmed`이며 현장 확인이 필요합니다. 기본 45초 동안 확인이 없으면 오류로 표시합니다.
+접수 응답과 실제 재생은 구분합니다. 브라우저와 TV 코드 방식은 실제 이벤트를 받아 `playing`으로 전환하고 신청자의 최신 결과를 갱신합니다. Chat에서 `결과`로 조회합니다. 기존 기기별 앱 실행은 `sent_unconfirmed`이며 현장 확인이 필요합니다. 기본 45초 동안 확인이 없으면 오류로 표시합니다.
 
 ## 재생 방식 설정
 
@@ -165,28 +168,11 @@ Android 태블릿에 이동식 거치대를 붙인 제품과 Android TV는 다�
 
 ## Google Chat 연결
 
-자세한 근거: [Google 공식 Pub/Sub Chat 앱 가이드](https://developers.google.com/workspace/chat/quickstart/pub-sub).
+[Apps Script 상세 가이드](docs/APPS-SCRIPT.md)의 순서대로 설정합니다. 결제 계정은 연결하지 않고 Google Chat API만 먼저 활성화합니다. 별도 서비스 계정 JSON 키가 필요하지 않습니다. 코드의 `apps-script/appsscript.json`은 배포 메타데이터이며 키 파일이 아닙니다.
 
-1. 개발용 Google Cloud 프로젝트를 만들고 Google Chat API, Pub/Sub API, YouTube Data API v3를 활성화합니다. 사용하는 Workspace에서 Chat 앱이 허용되어 있어야 합니다. Pub/Sub 사용에는 결제 계정 및 비용이 발생할 수 있습니다.
-2. Pub/Sub topic과 **pull subscription**을 생성합니다. 구독의 dead-letter 정책은 운영 환경에 맞게 설정하세요.
-3. Google Chat API → Configuration에서 앱 이름과 멘션/스페이스 참여 기능을 설정합니다. 연결 방식은 Cloud Pub/Sub, topic은 위에서 만든 것을 사용합니다. 앱 공개 대상은 테스트 사용자로 제한합니다.
-4. Chat 설정 화면에 표시된 Chat 발행 주체에게 해당 topic의 Pub/Sub Publisher 권한을 줍니다. 이 주체와 노트북 worker 계정은 역할이 다릅니다.
-5. 앱 프로젝트의 서비스 계정을 만들고 해당 subscription의 Pub/Sub Subscriber 권한을 줍니다. Chat 앱 인증에 사용할 계정으로 JSON 키를 발급하고 프로젝트 폴더의 `credentials.local.json`에 둡니다. 키 발급이 허용되지 않는 환경에서는 별도 인증 구성이 필요합니다.
-6. 아래 설정을 `config.local.json`에 지정합니다. 계정 키, API 키, 토큰은 GitHub에 올리지 않습니다.
+Chat 앱 등록용 Head deployment ID와 노트북 연결용 웹 앱 /exec URL은 별개입니다. 일반 Chat 앱 모드로 등록하고 웹 앱은 소유자 실행·Anyone 접근이 필요합니다. 조직 정책에서 이 접근이 금지되면 해당 배포 경로를 사용할 수 없습니다. 코드로 정책을 우회하지 않습니다.
 
-```json
-{
-  "enabled": true,
-  "serviceAccountFile": "credentials.local.json",
-  "subscription": "projects/YOUR_PROJECT/subscriptions/jukebox",
-  "allowedSpaces": ["spaces/YOUR_SPACE"],
-  "operatorUsers": ["users/YOUR_GOOGLE_CHAT_USER_ID"]
-}
-```
-
-위 객체는 전체 설정의 `google` 필드 값입니다. 앱을 허용한 스페이스에 추가하고 멘션하여 요청합니다. Chat API 응답은 서비스 계정의 `chat.bot` 범위, Pub/Sub 수신은 `pubsub` 범위를 각각 사용합니다. 사용자 사칭이나 도메인 전체 위임은 하지 않습니다.
-
-`spaces/...`, `users/...`는 Chat의 리소스 ID입니다. 이메일이나 화면 표시 이름이 아닙니다. Chat API/관리 콘솔 등 접근 권한이 있는 수단으로 확인하세요. 허용 목록이 비어 있으면 활성화되지 않습니다. Google 계정과 Workspace의 앱 사용 요건은 공식 가이드를 확인하세요.
+`@앱 내정보`로 ID 확인 → 양쪽 스페이스 허용 목록 설정 → `check-google` → 서버 실행 → `@앱 추가 <URL>` → 잠시 후 `@앱 결과` 순서로 TV 없이도 노트북에서 검증할 수 있습니다. `상태`·`검색` 등도 처리 후 `결과`로 조회합니다. 자발적 Chat 알림 푸시와 별도 웹훅은 사용하지 않습니다.
 
 ## 테스트 / 진단
 
@@ -201,7 +187,7 @@ node src/main.js check-google
 - `doctor`: 설정 검사. 실제 TV 호환성 판정이 아닙니다.
 - `probe`: 설정된 삼성/LG 주소 하나에 TCP 연결이 되는지만 검사. 재생 명령은 전송하지 않습니다.
 - `fingerprint`: 설정된 삼성/LG의 wss 주소에서 인증서 SHA-256 지문만 읽습니다. 출력값을 무조건 신뢰하지 마세요.
-- `check-google`: 준비된 서비스 계정으로 구독 설정과 허용 Chat 스페이스를 읽기만 합니다. 메시지 전송과 Pub/Sub 소비를 하지 않습니다. 브라우저 로그인만으로 서버 인증이 설정되지는 않습니다.
+- `check-google`: 서명된 중계 연결과 양쪽 허용 목록을 확인합니다. 곡 추가·메시지 발송은 하지 않으며 nonce 임시 캐시만 기록합니다. Cloud 결제 상태·Chat 등록·TV 재생을 검증하는 명령은 아닙니다.
 - 자동 테스트는 자격증명 없이 모의 Google·YouTube·TV 응답과 로컬 HTTP/WebSocket 서버로 실행합니다. 실제 유튜브 재생이나 특정 설치 환경은 테스트하지 않습니다.
 - [테스트 결과와 범위](docs/TESTING.md), [월요일 실기기 검증표](docs/HARDWARE.md), [설계와 제한](docs/ARCHITECTURE.md)을 참고하세요.
 - [운영·복구 절차](docs/OPERATIONS.md), [최소 접근 범위](docs/ACCESS.md), [실사용 완료 조건](docs/ACCEPTANCE.md)도 참고하세요.

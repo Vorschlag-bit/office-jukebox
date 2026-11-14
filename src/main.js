@@ -7,13 +7,13 @@ import { YouTube } from './youtube.js';
 import { Engine } from './engine.js';
 import { createAdapter } from './adapters.js';
 import { createServer } from './server.js';
-import { ServiceAccountAuth, GoogleWorker } from './google.js';
+import { AppsScriptWorker, validateBridge } from './apps-script.js';
 import { check, AppError } from './util.js';
 import { probe } from './probe.js';
 import { acquireLock, atomicJson } from './persistence.js';
 import { pairTvCode } from './lounge.js';
 import { createInterface } from 'node:readline/promises';
-import { verifyGoogle } from './preflight.js';
+
 
 export function loadConfig(path) {
   const c = JSON.parse(readFileSync(path, 'utf8'));
@@ -28,7 +28,8 @@ export function loadConfig(path) {
   if (c.google?.enabled) {
     check(Array.isArray(c.google.allowedSpaces) && c.google.allowedSpaces.length > 0 && c.google.allowedSpaces.every(x => typeof x === 'string' && /^spaces\/[A-Za-z0-9_-]+$/.test(x)), 'CONFIG', '허용 채팅방을 spaces/리소스ID 형식으로 지정하세요.');
     check(Array.isArray(c.google.operatorUsers) && c.google.operatorUsers.every(x => typeof x === 'string' && /^users\/[A-Za-z0-9_-]+$/.test(x)), 'CONFIG', '운영자는 users/리소스ID 형식으로 지정하세요. 이메일과 표시 이름은 사용할 수 없습니다.');
-    check(/^projects\/[A-Za-z0-9_-]+\/subscriptions\/[A-Za-z0-9_.~-]+$/.test(c.google.subscription || '') && typeof c.google.serviceAccountFile === 'string' && c.google.serviceAccountFile.length > 0, 'CONFIG', 'Pub/Sub 구독 이름과 서비스 계정 파일 경로를 확인하세요.');
+    validateBridge(c.google);
+    check(c.google.sharedSecret !== c.adminToken && c.google.sharedSecret !== c.playerToken, 'CONFIG', 'Apps Script 공유 비밀은 관리자·재생기 토큰과 달라야 합니다.');
   }
   return c;
 }
@@ -39,6 +40,7 @@ async function main() {
     check(!existsSync(configFile), 'EXISTS', 'config.local.json이 이미 있습니다. 덮어쓰지 않았습니다.');
     const c = JSON.parse(readFileSync(`${base}/config.example.json`, 'utf8'));
     c.adminToken = randomBytes(32).toString('base64url'); c.playerToken = randomBytes(32).toString('base64url');
+    c.google.sharedSecret = randomBytes(32).toString('base64url');
     mkdirSync(dirname(configFile), { recursive: true });
     writeFileSync(configFile, JSON.stringify(c, null, 2), { mode: 0o600, flag: 'wx' });
     console.log('config.local.json을 생성했습니다. 토큰은 이 파일에서 확인하세요.'); return;
@@ -47,12 +49,9 @@ async function main() {
   const config = loadConfig(configFile);
   const dataDirectory = resolve(dirname(configFile), config.dataDir || 'data');
   if (process.argv[2] === 'check-google') {
-    check(config.google?.enabled, 'CONFIG', '먼저 Google 연동 설정을 활성화하고 자격증명 파일을 준비하세요.');
-    const path = resolve(dirname(configFile), config.google.serviceAccountFile);
-    check(existsSync(path), 'CREDENTIALS', '설정한 서비스 계정 파일이 없습니다. 브라우저 로그인만으로 Node 서버가 인증되는 것은 아닙니다.');
-    const auth = new ServiceAccountAuth(JSON.parse(readFileSync(path, 'utf8')));
-    const result = await verifyGoogle(config.google, auth);
-    console.log(JSON.stringify(result, null, 2)); if (!result.ok) process.exitCode = 1;
+    check(config.google?.enabled, 'CONFIG', '먼저 Apps Script 연동 설정을 활성화하세요.');
+    const worker = new AppsScriptWorker({ config: config.google });
+    try { console.log(JSON.stringify(await worker.check(), null, 2)); } finally { worker.stop(); }
     return;
   }
   if (['pair-tv', 'use-browser', 'use-previous', 'restore-state'].includes(process.argv[2])) {
@@ -101,8 +100,7 @@ async function main() {
   let worker;
   const server = createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, hardwareVerified: false }) });
   if (config.google?.enabled) {
-    const credentials = JSON.parse(readFileSync(resolve(dirname(configFile), config.google.serviceAccountFile), 'utf8'));
-    worker = new GoogleWorker({ config: config.google, auth: new ServiceAccountAuth(credentials), engine });
+    worker = new AppsScriptWorker({ config: config.google, engine });
   }
   server.listen(config.port, config.host, () => {
     console.log(`Office Jukebox: http://${config.host}:${server.address().port}`);
