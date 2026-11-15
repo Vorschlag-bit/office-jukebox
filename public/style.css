@@ -53,3 +53,11 @@ button.secondary{background:#f9e1e4;color:#8b5f64}button.secondary:hover:not(:di
 @keyframes usagi-bob{0%,100%{transform:translateY(0) rotate(7deg)}50%{transform:translateY(-5px) rotate(3deg)}}
 @keyframes usagi-sticker{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(-4deg)}}
 @media(prefers-reduced-motion:reduce){.dashboard-page .empty-mascot,.dashboard-page .hero-sticker{animation:none}}
+/* Different high-resolution scenes for the banner, tea break and snack postcard. */
+.dashboard-page .room-header{background:linear-gradient(90deg,#fff7e9 25%,#fff7e9e8 40%,#fff7e900 64%),url('/usagi-cheer.jpg') right 53%/auto 310px no-repeat,#fff7e9}
+.dashboard-page .sidebar:after{left:27px;right:27px;height:172px;bottom:82px;background:#ffe9ad url('/usagi-snack.jpg') center 77%/cover no-repeat;border:7px solid #fffdf7;border-bottom-width:20px;box-shadow:0 5px 18px #aa7f4a20;border-radius:4px;transform:rotate(-6deg);opacity:1}
+.dashboard-page .empty-mascot{width:100%;max-width:245px;height:auto;aspect-ratio:16/10;object-fit:cover;object-position:58% 66%;border-width:6px;border-bottom-width:17px;animation:none;transform:rotate(3deg);margin:8px 0 24px;box-shadow:0 6px 16px #b1844821}
+.dashboard-page .empty-state{padding:10px 2px 0;min-height:270px}
+.dashboard-page .empty-state strong{max-width:235px;line-height:1.7}
+@media(max-width:1180px){.dashboard-page .room-header{background-size:auto,auto 285px}.dashboard-page .sidebar:after{left:19px;right:19px}}
+@media(max-width:680px){.dashboard-page .room-header{background:linear-gradient(90deg,#fff7e9fa 5%,#fff7e9e8 36%,#fff7e944 70%),url('/usagi-cheer.jpg') 65% 50%/auto 310px no-repeat,#fff7e9}.dashboard-page .empty-mascot{max-width:270px}.dashboard-page .empty-state{min-height:250px}}

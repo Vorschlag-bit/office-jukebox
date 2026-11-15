@@ -229,3 +229,5 @@ Google 요청은 5분 이상 오래되면 폐기합니다. 서비스 중단 중 
 ### 배경 그림 출처
 
 음악방의 우사기 배경은 [Chiikawa Wallpaper 우사기 모음](https://chiikawawallpaper.com/zh-Hans/desktop-wallpaper/usagi)의 [3840 × 2161 JPEG](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260514/23056d6a0dbe8673e59d88ba2b6c7268.jpg)을 원본 크기 그대로 사용합니다. `public/usagi-wallpaper.jpg`로 로컬 제공하며, 화면 하단에도 출처 링크를 표시합니다. 캐릭터·그림의 권리는 각 권리자에게 있습니다. 공개 소스 사이트의 이미지 제공은 별도 이용허락을 뜻하지 않습니다.
+
+추가 우사기 그림은 [하트와 함께 뛰는 우사기](https://r2.chiikawa-wallpaper.com/wallpaper/desktop/20260514/d1e9a2ca1f7e94295e8dba4e59948ac3.jpg) (3840 × 2161), [차 마시는 우사기](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260514/67b207a003053fc434610ea89ae90cf3.jpg) (3840 × 2161), [간식 우사기](https://r2.chiikawa-wallpaper.com/wallpaper/wallpaper/75f34292981b9361d24cdaac632b36c2.jpeg) (1908 × 4000)입니다. 원본 크기로 저장하고 화면마다 다른 그림을 사용합니다.

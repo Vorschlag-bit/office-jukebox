@@ -7,7 +7,7 @@ function api(path, data) {
 function feedback(text, error) { el('feedback').textContent = (error ? '하아?! 🐰 ' : '야하~! ♪ ') + text; el('feedback').className = error ? 'feedback error' : 'feedback success'; }
 function connection(ok) { el('connection').textContent = ok ? '음악방 연결됨' : '서버에 다시 연결하는 중'; el('connection-dot').className = 'connection-dot' + (ok ? '' : ' offline'); }
 var names = { playing: '재생 중', sent_unconfirmed: '재생 준비 중', dispatching: '재생 준비 중', blocked: '재생 버튼을 눌러 주세요', paused: '일시정지', error: '재생을 확인해 주세요', recovery_required: '다시 재생을 눌러 주세요' };
-function artwork(id) { return id ? 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/mqdefault.jpg' : '/avatar.png'; }
+function artwork(id) { return id ? 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/mqdefault.jpg' : '/usagi-cheer.jpg'; }
 function refresh() {
   return api('/api/state').then(function(s) {
     latest = s; connection(true); if (connectionFailed) { feedback('다시 연결됐어요. 현재 곡의 상태를 확인해 주세요.'); connectionFailed = false; }

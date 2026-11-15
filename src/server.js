@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { check, equalSecret, AppError } from './util.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
-const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/player': ['player.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/player.js': ['player.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/avatar.png': ['avatar.png', 'image/png'], '/usagi-wallpaper.jpg': ['usagi-wallpaper.jpg', 'image/jpeg'] };
+const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/player': ['player.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/player.js': ['player.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/avatar.png': ['avatar.png', 'image/png'], '/usagi-wallpaper.jpg': ['usagi-wallpaper.jpg', 'image/jpeg'], '/usagi-teatime.jpg': ['usagi-teatime.jpg', 'image/jpeg'], '/usagi-cheer.jpg': ['usagi-cheer.jpg', 'image/jpeg'], '/usagi-snack.jpg': ['usagi-snack.jpg', 'image/jpeg'] };
 async function readJson(req) {
   const chunks = []; let size = 0;
   for await (const chunk of req) { size += chunk.length; check(size <= 8192, 'BODY_SIZE', '요청 크기가 너무 큽니다.', 413); chunks.push(chunk); }
