@@ -82,8 +82,8 @@ test('slash setup and help return directly without enqueuing; help respects spac
   assert.match(r.message('/내정보'),/spaces\/test/);
   assert.match(r.message('/info'),/spaces\/test/);
   assert.match(r.message('/result'),/아직 처리 결과/);
-  assert.match(r.message('/help'),/신청 버튼/);
-  assert.match(r.message('/도움말'),/신청 버튼/);
+  assert.match(r.message('/help'),/신청하기/);
+  assert.match(r.message('/도움말'),/신청하기/);
   const panel = r.context.onMessage(r.event(''));
   assert.equal(r.context.onMessage(r.event('오타')).cardsV2[0].card.header.title,'우사기 음악방');
   assert.equal(panel.cardsV2[0].card.header.title, '우사기 음악방');
@@ -198,12 +198,12 @@ test('real HTTP wire roundtrip carries signed protocol into Apps Script runtime'
 test('Usagi voice decorates reception, playback, and errors exactly once without changing cards or protocol', () => {
   const r=runtime();
   const reception=r.context.onMessage(r.event('추가 https://youtu.be/dQw4w9WgXcQ'));
-  assert.match(reception.text,/^야하~!/);assert.match(reception.text,/접수/);
+  assert.match(reception.text,/^(푸루|후웅)/);assert.match(reception.text,/접수/);
   assert.equal(reception.cardsV2[0].card.header.title,'우사기 음악방');
   const card=r.context.jbSpeakResponse({text:'재생 중: A song',cardsV2:[{cardId:'kept'}]});
-  assert.match(card.text,/^우라~!/);assert.equal(card.cardsV2[0].cardId,'kept');
+  assert.match(card.text,/^(우라라라|야하~야핫|푸루루루)/);assert.equal(card.cardsV2[0].cardId,'kept');
   assert.equal(r.context.jbSpeakResponse(card).text,card.text);
-  assert.match(r.context.onMessage(r.event('정지',undefined,'users/test','spaces/other')).text,/^하아/);
+  assert.match(r.context.onMessage(r.event('정지',undefined,'users/test','spaces/other')).text,/^(하아|후와|호와)/);
   assert.equal(r.call('check').ok,true);
 });
 
@@ -211,8 +211,22 @@ test('playlist card submits through the same authorized durable Chat command pat
   const r=runtime(), url='https://www.youtube.com/playlist?list=PL1234567890abc';
   const menu=r.context.onMessage(r.event('메뉴'));assert.match(JSON.stringify(menu.cardsV2),/♫ 목록 담기/);
   const click={eventTime:new Date(r.now()).toISOString(),space:{name:'spaces/test'},user:{name:'users/test',type:'HUMAN'},message:{name:'spaces/test/messages/menu'},common:{parameters:{command:'submit-playlist'},formInputs:{song:{'':{stringInputs:{value:[url]}}}}}};
-  assert.match(r.context.onCardClick(click).text,/야하.*접수/s);
+  assert.match(r.context.onCardClick(click).text,/접수/s);
   assert.match(r.context.onCardClick(click).text,/이미/);
   const pulled=r.call('pull',{clientId:randomUUID()}).command;assert.equal(pulled.text,'목록 '+url);
   assert.match(r.context.onCardClick({...click,space:{name:'spaces/other'}}).text,/허용되지/);
+});
+
+test('contextual Usagi variants remain deterministic and never turn a receipt or confirmation into playback', () => {
+  const r=runtime(), results=new Set();
+  for(let i=0;i<12;i++) results.add(r.context.jbSpeakResponse({text:'접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.'},'event-'+i).text.split('\n')[0]);
+  assert.equal(results.size,3);
+  const text='재생을 멈추고 대기열을 모두 비울까요?';
+  assert.equal(r.context.jbSpeakResponse({text},'a').text,r.context.jbSpeakResponse({text},'a').text);
+  assert.match(r.context.jbSpeakResponse({text},'a').text,/비울까|확인/);
+  assert.doesNotMatch(r.context.jbSpeakResponse({text},'a').text,/정리했어|재생 중/);
+  const error=r.context.jbSpeakResponse({text:'재생 오류: 노래 [YOUTUBE_150]'},'b');assert.match(error.text,/YOUTUBE_150/);
+  const receipt=r.context.jbSpeakResponse({text:'접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.'},'c');assert.match(receipt.text,/아직 재생 확인은 아니야/);
+  const web=vm.createContext({});vm.runInContext(readFileSync(new URL('../public/voice.js',import.meta.url),'utf8'),web);
+  for(const text of ['재생 중: 노래','일시정지를 요청했습니다.','신청 취소: 노래','재생 오류: <test> [YOUTUBE_150]']) assert.equal(web.UsagiVoice.say(text,'same'),r.context.jbSpeakResponse({text},'same').text);
 });

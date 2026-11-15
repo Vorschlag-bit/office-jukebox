@@ -14,7 +14,7 @@ function playerEnvironment() {
     send(body) { requests.push({ path: this.path, body: JSON.parse(body) }); const response = responses.shift() || { status: 200, data: {} }; this.status = response.status; this.responseText = JSON.stringify(response.data); this.onload(); }
   }
   const context = vm.createContext({ document, XMLHttpRequest: Xhr, Date, Math, JSON, Error, setInterval: cb => { interval = cb; }, window: { parent: {}, addEventListener(type, cb) { if(type === 'message') messageListener = cb; }, location: { origin: 'http://localhost:8787' }, YT: true }, YT: { Player: function (id, opts) { options = opts; return player; } } });
-  vm.runInContext(source, context); context.window.onYouTubeIframeAPIReady();
+  vm.runInContext(readFileSync(new URL('../public/voice.js', import.meta.url), 'utf8'), context); vm.runInContext(source, context); context.window.onYouTubeIframeAPIReady();
   element('token').value = 'test-token';
   const state = (session = 'session-a', status = 'sent_unconfirmed') => ({ current: { sessionId: session, status, videoId: 'dQw4w9WgXcQ', title: '<script>not HTML</script>' } });
   function makeReady() { if (options) options.events.onReady({ target: player }); }

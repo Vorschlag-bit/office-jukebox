@@ -4,7 +4,7 @@ var player = null, ready = false, apiReady = false, active = null, token = '', c
 var clientId = 'player-' + Date.now() + '-' + Math.floor(Math.random() * 1000000000);
 var reconnectNeedsRecovery = false, interruptedSession = null, generation = 0, currentTrack = null;
 var pendingEvents = [], sendingEvent = false, lastQueued = '', played = false, appliedControl = -1;
-function notice(text) { document.getElementById('notice').textContent = text; }
+function notice(text) { document.getElementById('notice').textContent = UsagiVoice.say(text, text); }
 function api(path, data, callback) {
   var xhr = new XMLHttpRequest();
   xhr.open('POST', path, true); xhr.timeout = 10000;
@@ -86,7 +86,7 @@ function poll() {
     busy = false;
     if (error) {
       if (active) interruptedSession = active;
-      reconnectNeedsRecovery = true; stopLocally(); notice(error.code === 'LEASE' ? '다른 재생 창을 닫으면 15초 안에 자동 연결돼요.' : error.message); document.getElementById('login').hidden = false;
+      reconnectNeedsRecovery = true; stopLocally(); notice(error.code === 'LEASE' ? '후웅? 다른 재생 창이 먼저 와 있었네. 그 창을 닫으면 15초 안에 자동 연결돼!' : error.message); document.getElementById('login').hidden = false;
       if (error.status === 401 && window.parent && window.parent !== window && window.parent.postMessage) window.parent.postMessage({ type: 'jukebox-reconnect' }, window.location.origin);
       return;
     }
