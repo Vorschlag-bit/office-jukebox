@@ -225,6 +225,7 @@ test('contextual Usagi variants remain deterministic and never turn a receipt or
   assert.equal(r.context.jbSpeakResponse({text},'a').text,r.context.jbSpeakResponse({text},'a').text);
   assert.match(r.context.jbSpeakResponse({text},'a').text,/비울까|확인/);
   assert.doesNotMatch(r.context.jbSpeakResponse({text},'a').text,/정리했어|재생 중/);
+  assert.match(r.context.jbSpeakResponse({text:'유효한 HTTPS 유튜브 영상 URL만 신청할 수 있습니다.'},'bad-url').text,/^(하아|후와|호와)/);
   const error=r.context.jbSpeakResponse({text:'재생 오류: 노래 [YOUTUBE_150]'},'b');assert.match(error.text,/YOUTUBE_150/);
   const receipt=r.context.jbSpeakResponse({text:'접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.'},'c');assert.match(receipt.text,/아직 재생 확인은 아니야/);
   const web=vm.createContext({});vm.runInContext(readFileSync(new URL('../public/voice.js',import.meta.url),'utf8'),web);

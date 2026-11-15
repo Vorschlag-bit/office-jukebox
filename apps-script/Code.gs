@@ -205,7 +205,7 @@ function jbSpeakResponse(response, seed) {
   if (/신청 취소:/.test(text)) kind = 'cancel';
   if (/재생을 멈추고 대기열을 비웠|대기열 비움 완료/.test(text)) kind = 'stopped';
   if (/비울까요/.test(text)) kind = 'confirm';
-  if (/지원하지|허용되지|못했|오류|만료|차단|거부|설정이 필요|필요합니다|연결을 확인|실패|운영자만|본인의 신청곡만|가득|개까지 신청/.test(text)) kind = 'error';
+  if (/지원하지|허용되지|못했|오류|만료|차단|거부|설정이 필요|필요합니다|연결을 확인|유효한 HTTPS|입력하세요|입력해 주세요|올바르지|실패|운영자만|본인의 신청곡만|가득|개까지 신청/.test(text)) kind = 'error';
   // Receipts stay receipts; do not imply playback until the player has reported it.
   text = text.replace('접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.', '신청 접수! 보통 5~10초 뒤 처리돼. 아직 재생 확인은 아니야. 아래에서 내 신청 결과 확인을 눌러 줘!')
     .replace('링크를 붙여 넣고 신청 버튼을 누르세요. 재생 제어와 결과 조회도 버튼으로 할 수 있어요.', '영상 링크는 신청하기, 재생목록 링크는 목록 담기! 재생 제어와 결과 확인도 아래 버튼으로 골라 줘.')
