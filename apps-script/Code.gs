@@ -19,8 +19,8 @@ function jbRemember(p, index, prefix, id, value, max, ttl, now) {
   while (ids.length > max) p.deleteProperty(prefix + ids.shift());
   jbWrite(p, prefix + id, value); jbWrite(p, index, ids);
 }
-function onAddedToSpace() { return { text: 'Office Jukebox: @앱 내정보 → 허용 목록 설정 → @앱 추가 <유튜브 URL> → 잠시 후 @앱 결과. 노트북 서버가 필요합니다.' }; }
-function onMessage(e) {
+function onAddedToSpace() { return jbSpeakResponse({ text: '우사기 등장! @우사기를 멘션하면 음악방 메뉴가 열려! 처음 연결할 때는 @우사기 내정보로 설정해 줘.' }); }
+function jbHandleMessage(e) {
   try {
     var payload = e.chat && e.chat.messagePayload;
     var m = (payload && payload.message) || e.message || {};
@@ -145,9 +145,9 @@ function jbPanel(p, space, user, message) {
     if (/^[a-f0-9-]{36}$/.test(song.id || '')) return { buttonList: { buttons: [jbButton((i+1) + '. ' + song.title.slice(0, 55) + '  × 취소', '취소 id:' + song.id)] } };
     return { textParagraph: { text: jbHtml((i+1) + '. ' + song.title) } };
   }) });
-  return { text: message, cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '주크봇 음악방', subtitle: '신청은 간단하게, 음악은 함께', imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
+  return { text: message, cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '우사기 음악방', subtitle: '야하~♪ 우라! 오늘도 신나게!', imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
 }
-function onCardClick(e) {
+function jbHandleClick(e) {
   try {
     var common = e.common || e.commonEventObject || {}, parameters = common.parameters || {};
     (e.action && e.action.parameters || []).forEach(function(x) { parameters[x.key] = x.value; });
@@ -165,5 +165,18 @@ function onCardClick(e) {
     var response = onMessage({ eventTime: at, space: { name: space }, user: user, message: { name: space + '/messages/button-' + jbHash(name + '/' + user.name + '/' + at + '/' + command), argumentText: command, sender: user } });
     if (response.cardsV2) response.actionResponse = { type: 'UPDATE_MESSAGE' };
     return response;
-  } catch (_) { return { text: '버튼을 처리하지 못했어요. @주크봇 메뉴를 다시 열어 주세요.' }; }
+  } catch (_) { return { text: '버튼을 처리하지 못했어요. @우사기 메뉴를 다시 열어 주세요.' }; }
 }
+
+// Short Usagi exclamations frame the message; the operational meaning stays explicit.
+function jbSpeakResponse(response) {
+  if (!response || typeof response.text !== 'string' || /^(야하|우라|하아|푸루)/.test(response.text)) return response;
+  var text = response.text, cry = '야하~! 🐰';
+  if (/재생 중|재생을 멈추|다음 곡으로|대기열에 담|신청 취소/.test(text)) cry = '우라~! ♪';
+  if (/지원하지|허용되지|못했|오류|만료|차단|거부|설정이 필요/.test(text)) cry = '하아?! 🐰';
+  if (/접수했습니다/.test(text)) cry = '야하~! ♪';
+  response.text = cry + '\n' + text;
+  return response;
+}
+function onMessage(e) { return jbSpeakResponse(jbHandleMessage(e)); }
+function onCardClick(e) { return jbSpeakResponse(jbHandleClick(e)); }

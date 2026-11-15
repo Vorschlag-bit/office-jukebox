@@ -85,8 +85,8 @@ test('slash setup and help return directly without enqueuing; help respects spac
   assert.match(r.message('/help'),/신청 버튼/);
   assert.match(r.message('/도움말'),/신청 버튼/);
   const panel = r.context.onMessage(r.event(''));
-  assert.equal(r.context.onMessage(r.event('오타')).cardsV2[0].card.header.title,'주크봇 음악방');
-  assert.equal(panel.cardsV2[0].card.header.title, '주크봇 음악방');
+  assert.equal(r.context.onMessage(r.event('오타')).cardsV2[0].card.header.title,'우사기 음악방');
+  assert.equal(panel.cardsV2[0].card.header.title, '우사기 음악방');
   assert.equal(r.props.has('QUEUE'),false);
   assert.match(r.message('/도움말',undefined,'users/test','spaces/other'),/허용되지/);
 });
@@ -193,4 +193,16 @@ test('real HTTP wire roundtrip carries signed protocol into Apps Script runtime'
   server.listen(0,'127.0.0.1'); await new Promise(resolve=>server.once('listening',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
   const e=engine(r), w=worker(e,r,(_,o)=>fetch(`http://127.0.0.1:${server.address().port}`,o));t.after(()=>w.stop());
   r.message('추가 https://youtu.be/dQw4w9WgXcQ');await w.cycle();assert.equal(e.state.queue.length,1);assert.match(r.message('결과'),/추가|대기열/);
+});
+
+test('Usagi voice decorates reception, playback, and errors exactly once without changing cards or protocol', () => {
+  const r=runtime();
+  const reception=r.context.onMessage(r.event('추가 https://youtu.be/dQw4w9WgXcQ'));
+  assert.match(reception.text,/^야하~!/);assert.match(reception.text,/접수/);
+  assert.equal(reception.cardsV2[0].card.header.title,'우사기 음악방');
+  const card=r.context.jbSpeakResponse({text:'재생 중: A song',cardsV2:[{cardId:'kept'}]});
+  assert.match(card.text,/^우라~!/);assert.equal(card.cardsV2[0].cardId,'kept');
+  assert.equal(r.context.jbSpeakResponse(card).text,card.text);
+  assert.match(r.context.onMessage(r.event('정지',undefined,'users/test','spaces/other')).text,/^하아/);
+  assert.equal(r.call('check').ok,true);
 });

@@ -4,7 +4,7 @@ function el(id) { return document.getElementById(id); }
 function api(path, data) {
   return fetch(path, { method: data === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }).then(function(r) { return r.json().then(function(d) { if (!r.ok) { var e = new Error(d.message); e.code = d.error; throw e; } return d; }); });
 }
-function feedback(text, error) { el('feedback').textContent = text; el('feedback').className = error ? 'feedback error' : 'feedback success'; }
+function feedback(text, error) { el('feedback').textContent = (error ? '하아?! 🐰 ' : '야하~! ♪ ') + text; el('feedback').className = error ? 'feedback error' : 'feedback success'; }
 function connection(ok) { el('connection').textContent = ok ? '음악방 연결됨' : '서버에 다시 연결하는 중'; el('connection-dot').className = 'connection-dot' + (ok ? '' : ' offline'); }
 var names = { playing: '재생 중', sent_unconfirmed: '재생 준비 중', dispatching: '재생 준비 중', blocked: '재생 버튼을 눌러 주세요', paused: '일시정지', error: '재생을 확인해 주세요', recovery_required: '다시 재생을 눌러 주세요' };
 function artwork(id) { return id ? 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/mqdefault.jpg' : '/avatar.png'; }
