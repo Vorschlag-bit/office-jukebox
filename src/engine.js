@@ -18,7 +18,8 @@ export class Engine {
     return result;
   }
   snapshot() {
-    return structuredClone({ queue: this.state.queue, current: this.state.current, history: this.state.history.slice(-10), paused: !!this.state.paused, adapter: this.adapter.info(), notifications: { pending: this.state.outbox.length, failed: this.state.deadLetters?.length || 0 }, player: this.player ? { online: this.now() - this.player.lastSeen < 15000 } : { online: false } });
+    const publicTrack = track => track ? Object.fromEntries(['id', 'videoId', 'title', 'source', 'status', 'sessionId', 'desiredState', 'controlVersion', 'error', 'confirmation'].filter(key => Object.hasOwn(track, key)).map(key => [key, track[key]])) : null;
+    return structuredClone({ queue: this.state.queue.map(publicTrack), current: publicTrack(this.state.current), history: this.state.history.slice(-10).map(publicTrack), paused: !!this.state.paused, adapter: this.adapter.info(), notifications: { pending: this.state.outbox.length, failed: this.state.deadLetters?.length || 0 }, player: this.player ? { online: this.now() - this.player.lastSeen < 15000 } : { online: false } });
   }
   notify(text, track = this.state.current) {
     if (track?.requestSpace && this.state.outbox.length < 500) this.state.outbox.push({ id: randomUUID(), space: track.requestSpace, user: track.requestedBy, thread: track.requestThread, text });

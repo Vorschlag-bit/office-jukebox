@@ -147,3 +147,17 @@ test('large playlists cap each import at twenty and user quota rejects before ne
   engine.perUserLimit=5;
   await assert.rejects(engine.command({text:'목록 https://youtube.com/playlist?list=PL1234567890abc',user:'test'}),{code:'USER_LIMIT'});assert.equal(calls,1);
 });
+
+test('shared snapshots exclude requester identity and request metadata while ownership enforcement remains internal', async () => {
+  const {engine}=setup();
+  await add(engine,{user:'users/private-listener',space:'spaces/private-room',thread:'spaces/private-room/threads/private'});
+  const raw=engine.state.queue[0];assert.equal(raw.requestedBy,'users/private-listener');
+  engine.state.history.push({...raw,status:'ended'});
+  await engine.heartbeat('client-1234');
+  const snapshot=engine.snapshot(), json=JSON.stringify(snapshot);
+  assert.doesNotMatch(json,/private-listener|private-room|requestThread|requestedBy|requestSpace|addedAt/);
+  assert.equal(snapshot.current.videoId,raw.videoId);assert.ok(snapshot.current.sessionId);
+  assert.equal(snapshot.history[0].title,raw.title);assert.equal(engine.state.current.requestedBy,'users/private-listener');
+  await add(engine,{user:'users/private-listener'});
+  await assert.rejects(engine.command({text:'취소 1',user:'users/other'}),{code:'FORBIDDEN'});
+});

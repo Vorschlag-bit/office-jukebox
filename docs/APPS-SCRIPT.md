@@ -215,3 +215,7 @@ Apps Script 소스를 변경하면 **웹 앱 배포 관리 → 수정 → 새 �
 - 모든 Google 계정·조직 정책에서 배포 가능하다는 보장은 없습니다. Apps Script VM 모의 테스트와 HTTP 테스트는 실제 Chat 등록 성공을 대신하지 않습니다.
 
 공식 근거: [일반 Chat Apps Script 앱 설정](https://developers.google.com/workspace/chat/quickstart/apps-script-app#apps-script), [웹 앱 배포](https://developers.google.com/apps-script/guides/web), [Apps Script 할당량과 초과 시 중단](https://developers.google.com/apps-script/guides/services/quotas).
+
+## 비공개 선곡
+
+`@우사기 익명메뉴`로 공용 신청 카드를 게시합니다. 신청은 OPEN_DIALOG로 열리는 본인 전용 창에서 처리하고, 결과는 본인 전용 대화상자로 조회합니다. 카드·명령의 일반 응답은 NEW_MESSAGE와 이벤트 사용자 privateMessageViewer로 전달합니다. 기존 UPDATE_MESSAGE 방식으로 공용 카드에 개인 결과를 쓰지 않습니다. 기존 공개 메시지는 삭제되지 않으며, 채팅창 직접 입력은 익명이 아닙니다. 내부 사용자 ID는 제한·취소·결과 전달을 위해 유지합니다. 추가 OAuth 범위·서비스·결제 연결은 필요하지 않습니다.

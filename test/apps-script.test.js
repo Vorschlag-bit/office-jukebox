@@ -117,7 +117,7 @@ test('queue buttons cancel by stable song ID and preserve the clicking user iden
   r.props.set('VIEW',JSON.stringify({at:r.now(),current:null,queue:[{id:songId,title:'A song'}],queueCount:1,paused:false,searchEnabled:false}));
   const menu=r.context.onMessage(r.event('메뉴'));assert.match(JSON.stringify(menu.cardsV2),new RegExp('취소 id:'+songId));
   const click={...r.event(''),common:{parameters:{command:'취소 id:'+songId}}};
-  const reply=r.context.onCardClick(click);assert.equal(reply.actionResponse.type,'UPDATE_MESSAGE');
+  const reply=r.context.onCardClick(click);assert.equal(reply.actionResponse.type,'NEW_MESSAGE');assert.equal(reply.privateMessageViewer.name,'users/test');
   const command=r.call('pull',{clientId:randomUUID()}).command;
   assert.equal(command.text,'취소 id:'+songId);assert.equal(command.user,'users/test');
 });
@@ -209,7 +209,7 @@ test('Usagi voice decorates reception, playback, and errors exactly once without
 
 test('playlist card submits through the same authorized durable Chat command path', async () => {
   const r=runtime(), url='https://www.youtube.com/playlist?list=PL1234567890abc';
-  const menu=r.context.onMessage(r.event('메뉴'));assert.match(JSON.stringify(menu.cardsV2),/♫ 목록 담기/);
+  const menu=r.context.onMessage(r.event('메뉴'));assert.match(JSON.stringify(menu.cardsV2),/비공개 신청창 열기/);
   const click={eventTime:new Date(r.now()).toISOString(),space:{name:'spaces/test'},user:{name:'users/test',type:'HUMAN'},message:{name:'spaces/test/messages/menu'},common:{parameters:{command:'submit-playlist'},formInputs:{song:{'':{stringInputs:{value:[url]}}}}}};
   assert.match(r.context.onCardClick(click).text,/접수/s);
   assert.match(r.context.onCardClick(click).text,/이미/);
@@ -230,4 +230,37 @@ test('contextual Usagi variants remain deterministic and never turn a receipt or
   const receipt=r.context.jbSpeakResponse({text:'접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.'},'c');assert.match(receipt.text,/아직 재생 확인은 아니야/);
   const web=vm.createContext({});vm.runInContext(readFileSync(new URL('../public/voice.js',import.meta.url),'utf8'),web);
   for(const text of ['재생 중: 노래','일시정지를 요청했습니다.','신청 취소: 노래','재생 오류: <test> [YOUTUBE_150]']) assert.equal(web.UsagiVoice.say(text,'same'),r.context.jbSpeakResponse({text},'same').text);
+});
+
+function dialogEvent(r, command, overrides={}) {
+  return {...r.event(''),dialogEventType:'REQUEST_DIALOG',common:{parameters:{command}},...overrides};
+}
+test('private request dialog does not post a public receipt, duplicates once, and keeps permission checks', () => {
+  const r=runtime();
+  const open=r.context.onCardClick(dialogEvent(r,'open-anonymous'));
+  assert.equal(open.actionResponse.type,'DIALOG');assert.match(JSON.stringify(open),/privateSong/);assert.equal(r.props.has('QUEUE'),false);
+  const input=dialogEvent(r,'anonymous-add',{dialogEventType:'SUBMIT_DIALOG',common:{parameters:{command:'anonymous-add',user:'users/forged'},formInputs:{privateSong:{stringInputs:{value:['https://youtu.be/dQw4w9WgXcQ']}}}}});
+  const reply=r.context.onCardClick(input);
+  assert.equal(reply.actionResponse.type,'DIALOG');assert.equal(reply.actionResponse.dialogAction.actionStatus.statusCode,'OK');
+  assert.equal(reply.text,undefined);assert.equal(reply.cardsV2,undefined);assert.doesNotMatch(JSON.stringify(reply),/dQw4w9WgXcQ|users\/test/);
+  r.context.onCardClick(input);
+  const request=r.call('pull',{clientId:randomUUID()}).command;assert.equal(request.text,'추가 https://youtu.be/dQw4w9WgXcQ');assert.equal(request.user,'users/test');
+  assert.equal(JSON.parse(r.props.get('QUEUE')).length,1);
+  const denied=r.context.onCardClick({...input,space:{name:'spaces/other'}});assert.match(denied.text,/허용되지/);assert.equal(denied.privateMessageViewer.name,'users/test');
+});
+test('private dialog validates context, empty input and cancellation without enqueueing', () => {
+  const r=runtime();
+  const empty=r.context.onCardClick(dialogEvent(r,'anonymous-add',{dialogEventType:'SUBMIT_DIALOG'}));assert.equal(empty.actionResponse.dialogAction.actionStatus.statusCode,'INVALID_ARGUMENT');
+  assert.match(r.context.onCardClick(dialogEvent(r,'open-anonymous',{dialogEventType:undefined})).text,/새 메뉴/);
+  const cancel=r.context.onCardClick(dialogEvent(r,'anonymous-add',{dialogEventType:'CANCEL_DIALOG'}));assert.equal(cancel.actionResponse.dialogAction.actionStatus.statusCode,'OK');
+  assert.equal(r.props.has('QUEUE'),false);
+});
+test('public launch card contains no private results; replies and result dialogs are per-user', () => {
+  const r=runtime();
+  r.props.set('r_'+r.context.jbHash('spaces/test/users/test'),JSON.stringify({at:r.now(),text:'MY_PRIVATE_RESULT'}));
+  r.props.set('r_'+r.context.jbHash('spaces/test/users/other'),JSON.stringify({at:r.now(),text:'OTHER_PRIVATE_RESULT'}));
+  const launch=r.context.onMessage(r.event('익명메뉴'));assert.equal(launch.privateMessageViewer,undefined);assert.doesNotMatch(JSON.stringify(launch),/PRIVATE_RESULT|users\/test/);assert.match(JSON.stringify(launch),/OPEN_DIALOG/);
+  const result=r.context.onCardClick(dialogEvent(r,'open-private-result'));assert.equal(result.actionResponse.type,'DIALOG');assert.match(JSON.stringify(result),/MY_PRIVATE_RESULT/);assert.doesNotMatch(JSON.stringify(result),/OTHER_PRIVATE_RESULT/);
+  const privateReply=r.context.onMessage(r.event('결과'));assert.equal(privateReply.privateMessageViewer.name,'users/test');
+  const privateCard=r.context.onCardClick(dialogEvent(r,'메뉴',{dialogEventType:undefined}));assert.equal(privateCard.actionResponse.type,'NEW_MESSAGE');assert.equal(privateCard.privateMessageViewer.name,'users/test');
 });
