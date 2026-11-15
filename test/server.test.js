@@ -34,6 +34,19 @@ test('tokens are role-separated; player cannot submit admin commands', async t =
   assert.equal((await api('/api/command', { text: '정지' }, 'player')).status, 401);
   assert.equal((await api('/api/player/poll', { clientId: 'client-1234' })).status, 401);
 });
+test('embedded playback credentials are admin-issued, player-only, and absent from URLs', async t => {
+  const {api,base}=await start(t);
+  assert.equal((await api('/api/playback-session',{},'player')).status,401);
+  assert.equal((await api('/api/playback-session',{},'admin',{Origin:'https://evil.example'})).status,403);
+  const r=await api('/api/playback-session',{});assert.equal(r.status,200);
+  const {token}=await r.json();assert.ok(token.length>=32);assert.notEqual(token,'p'.repeat(40));
+  assert.equal((await api('/api/player/poll',{clientId:'embedded-client'},token)).status,200);
+  assert.equal((await api('/api/command',{text:'정지'},token)).status,401);
+  assert.equal((await api('/api/capabilities',undefined,token)).status,401);
+  assert.equal((await (await api('/api/capabilities')).json()).searchEnabled,false);
+  assert.match((await fetch(base+'/player')).headers.get('Content-Security-Policy'),/frame-ancestors 'self'/);
+  assert.match((await fetch(base+'/')).headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);
+});
 test('cross-origin writes rejected, no CORS credentials exposed', async t => {
   const { api } = await start(t);
   const r = await api('/api/command', { text: '대기열' }, 'admin', { Origin: 'https://evil.example' });

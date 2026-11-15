@@ -47,7 +47,7 @@ test('regular users cannot skip; denial is persisted once', async () => {
 });
 test('operator identity is the Google user ID, not display name or message text', async () => {
   const { worker, engine } = setup(); const e = legacy(); e.message.argumentText = '정지'; e.message.sender.name = 'users/admin'; await worker.receive(message(e));
-  assert.match(engine.state.outbox[0].text, /정지 명령/);
+  assert.match(engine.state.outbox[0].text, /대기열을 비웠/);
 });
 test('poison messages are ignored safely', async () => {
   const { worker, engine } = setup(); await worker.receive({ message: { data: Buffer.from('{').toString('base64') } }); assert.equal(engine.state.outbox.length, 0);

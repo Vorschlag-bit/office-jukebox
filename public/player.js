@@ -64,7 +64,7 @@ function loadTrack(track) {
     onStateChange: function (e) {
       if (mine !== generation || session !== active) return;
       if (e.data === 1) { played = true; report(session, 'playing'); notice('재생 중'); document.getElementById('allow').hidden = true; }
-      else if (e.data === 2) report(session, 'paused');
+      else if (e.data === 2) { report(session, 'paused'); notice('일시정지됨 · 영상의 재생 버튼 또는 계속을 눌러 주세요.'); }
       else if (e.data === 0) report(session, 'ended');
     },
     onAutoplayBlocked: function () {
@@ -86,7 +86,9 @@ function poll() {
     busy = false;
     if (error) {
       if (active) interruptedSession = active;
-      reconnectNeedsRecovery = true; stopLocally(); notice(error.message); document.getElementById('login').hidden = false; return;
+      reconnectNeedsRecovery = true; stopLocally(); notice(error.code === 'LEASE' ? '다른 재생 창을 닫으면 15초 안에 자동 연결돼요.' : error.message); document.getElementById('login').hidden = false;
+      if (error.status === 401 && window.parent && window.parent !== window && window.parent.postMessage) window.parent.postMessage({ type: 'jukebox-reconnect' }, window.location.origin);
+      return;
     }
     document.getElementById('login').hidden = true; flushEvents();
     var current = s.current;
@@ -101,15 +103,22 @@ function poll() {
 }
 window.onYouTubeIframeAPIReady = function () { apiReady = true; poll(); };
 var apiLoading = false;
-document.getElementById('connect').onclick = function () {
-  token = document.getElementById('token').value; connected = true; document.getElementById('login').hidden = true;
+function connectToken(value) {
+  token = value.trim(); connected = true; document.getElementById('login').hidden = true;
   if (!apiReady && !apiLoading) {
     apiLoading = true; var script = document.createElement('script'); script.src = 'https://www.youtube.com/iframe_api';
     script.onerror = function () { apiLoading = false; notice('YouTube 플레이어를 불러오지 못했습니다. 인터넷 연결 후 다시 연결하세요.'); document.getElementById('login').hidden = false; };
     document.head.appendChild(script);
   }
   poll();
-};
+}
+document.getElementById('connect').onclick = function () { connectToken(document.getElementById('token').value); };
+if (window.addEventListener) window.addEventListener('message', function (e) {
+  if (e.origin !== window.location.origin || e.source !== window.parent || window.parent === window) return;
+  if (e.data && e.data.type === 'jukebox-connect' && typeof e.data.token === 'string') {
+    document.body.className += ' embedded-player'; connectToken(e.data.token);
+  }
+});
 document.getElementById('allow').onclick = function () { if (ready && active) { player.unMute(); player.playVideo(); } };
 document.addEventListener('visibilitychange', function () { if (document.hidden && ready && active) player.pauseVideo(); });
 setInterval(poll, 2000);

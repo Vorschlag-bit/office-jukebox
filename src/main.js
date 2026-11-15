@@ -96,7 +96,7 @@ async function main() {
   const release = acquireLock(dataDirectory);
   process.once('exit', release);
   const store = new Store(dataDirectory);
-  const engine = new Engine({ store, youtube: new YouTube(config.youtubeApiKey), adapter, maxQueue: config.maxQueue, queueTtlMs: config.queueTtlMs, perUserLimit: config.perUserLimit, autoSkipUnplayable: config.autoSkipUnplayable, handshakeTimeoutMs: config.handshakeTimeoutMs });
+  const engine = new Engine({ store, youtube: new YouTube(config.youtubeApiKey, fetch, Date.now, { resolveTitles: !!config.resolveVideoTitles }), adapter, maxQueue: config.maxQueue, queueTtlMs: config.queueTtlMs, perUserLimit: config.perUserLimit, autoSkipUnplayable: config.autoSkipUnplayable, handshakeTimeoutMs: config.handshakeTimeoutMs });
   let worker;
   const server = createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, hardwareVerified: false }) });
   if (config.google?.enabled) {

@@ -58,7 +58,11 @@ export class AppsScriptWorker extends GoogleWorker {
   async cycle() {
     try { await this.flush(); } catch { /* Receive independently from result retries. */ }
     if (this.engine.state.outbox.length >= 500) return;
-    const result = await this.bridge('pull', { clientId: this.clientId });
+    const snapshot = this.engine.snapshot();
+    const view = { current: snapshot.current ? { title: snapshot.current.title.slice(0, 180), status: snapshot.current.status } : null,
+      queue: snapshot.queue.slice(0, 8).map(x => ({ id: x.id, title: x.title.slice(0, 180) })), queueCount: snapshot.queue.length,
+      paused: snapshot.paused, searchEnabled: !!this.engine.youtube.key, playerOnline: snapshot.player.online };
+    const result = await this.bridge('pull', { clientId: this.clientId, view });
     const c = result.command;
     if (!c) return;
     check(typeof c.id === 'string' && c.id.length <= 150 && typeof c.lease === 'string' && c.lease.length <= 100 && typeof c.text === 'string' && c.text.length <= 500 && /^users\/[A-Za-z0-9_-]+$/.test(c.user || '') && this.config.allowedSpaces.includes(c.space) && Number.isFinite(c.at), 'BRIDGE_COMMAND', '잘못된 중계 명령입니다.', 502);

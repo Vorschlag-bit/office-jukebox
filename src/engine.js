@@ -67,7 +67,7 @@ export class Engine {
         check(this.state.outbox.length < 500, 'NOTIFICATIONS_FULL', 'Chat 응답이 누적됐습니다. 운영자가 알림 상태를 확인해야 합니다.', 503);
         check(!this.perUserLimit || this.state.queue.filter(x => x.requestedBy === user).length < this.perUserLimit, 'USER_LIMIT', `한 사람은 대기곡을 ${this.perUserLimit}개까지 신청할 수 있습니다.`);
         this.state.queue.push({ ...song, id: randomUUID(), requestedBy: user, addedAt: this.now(), expiresAt: this.now() + this.queueTtlMs, requestSpace: space, requestThread: thread });
-        reply = `신청 접수: ${song.title}. 대기열에 추가했습니다. 재생 여부는 상태 명령으로 확인하세요.`;
+        reply = `대기열에 담았어요: ${song.title}. 현재 곡이 끝나면 순서대로 재생돼요.`;
       };
       if (['재생', '추가', 'play', 'add'].includes(verb.toLowerCase())) {
         check(this.state.queue.length < this.maxQueue, 'QUEUE_FULL', '대기열이 가득 찼습니다.');
@@ -133,7 +133,7 @@ export class Engine {
           if (stop) this.state.queue = [];
           if (stop) this.state.paused = false;
           this.consecutiveFailures = 0;
-          reply = stop ? '정지 명령 전송 및 대기열 비움 완료. 기본 앱은 현장 정지를 확인하세요.' : '다음 곡으로 이동합니다.';
+          reply = stop ? (this.adapter.type === 'browser' ? '재생을 멈추고 대기열을 비웠어요.' : '정지 명령 전송 및 대기열 비움 완료. 기본 앱은 현장 정지를 확인하세요.') : '다음 곡으로 이동합니다.';
         }
       } else reply = '명령: 추가 <곡명/URL> · 검색 <곡명> · 선택 <번호> · 취소 <대기번호> · 대기열 · 상태 · 다음 · 정지 · 일시정지 · 계속 · 재시도 · 확인. 추가는 검색 첫 결과를 신청합니다.';
       if (eventId) {

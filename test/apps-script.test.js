@@ -70,9 +70,60 @@ test('command is deduplicated, leased, retained until matching ACK, then not re-
   assert.equal(r.call('ack',{clientId,id:again.id,lease:again.lease}).ok,true);
   assert.equal(r.call('pull',{clientId}).command,null); assert.match(r.message('대기열','same'),/이미/);
 });
+test('slash commands retain their verb when argumentText contains only arguments', () => {
+  const r=runtime(), e=r.event('https://youtu.be/dQw4w9WgXcQ');
+  e.message.text='/추가 https://youtu.be/dQw4w9WgXcQ';
+  e.message.slashCommand={commandId:'1'};
+  assert.match(r.context.onMessage(e).text,/접수/);
+  assert.equal(r.call('pull',{clientId:randomUUID()}).command.text,'추가 https://youtu.be/dQw4w9WgXcQ');
+});
+test('slash setup and help return directly without enqueuing; help respects space permissions', () => {
+  const r=runtime();
+  assert.match(r.message('/내정보'),/spaces\/test/);
+  assert.match(r.message('/info'),/spaces\/test/);
+  assert.match(r.message('/result'),/아직 처리 결과/);
+  assert.match(r.message('/help'),/신청 버튼/);
+  assert.match(r.message('/도움말'),/신청 버튼/);
+  const panel = r.context.onMessage(r.event(''));
+  assert.equal(r.context.onMessage(r.event('오타')).cardsV2[0].card.header.title,'주크봇 음악방');
+  assert.equal(panel.cardsV2[0].card.header.title, '주크봇 음악방');
+  assert.equal(r.props.has('QUEUE'),false);
+  assert.match(r.message('/도움말',undefined,'users/test','spaces/other'),/허용되지/);
+});
+test('card form accepts Apps Script inputs, deduplicates click retries and rejects forged actions/spaces', () => {
+  const r=runtime();
+  const event = {eventTime:new Date(r.now()).toISOString(),space:{name:'spaces/test'},user:{name:'users/test',type:'HUMAN'},message:{name:'spaces/test/messages/menu'},common:{parameters:{command:'submit-add'},formInputs:{song:{'':{stringInputs:{value:['https://youtu.be/dQw4w9WgXcQ']}}}}}};
+  assert.match(r.context.onCardClick(event).text,/접수/);
+  assert.match(r.context.onCardClick(event).text,/이미/);
+  const command=r.call('pull',{clientId:randomUUID()}).command;
+  assert.equal(command.text,'추가 https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(command.user,'users/test');
+  assert.match(r.context.onCardClick({...event,common:{parameters:{command:'unknown'}}}).text,/지원하지/);
+  assert.match(r.context.onCardClick({...event,space:{name:'spaces/other'}}).text,/허용되지/);
+  assert.match(r.context.onCardClick({...event,eventTime:''}).text,/확인하지/);
+});
+test('stop card asks before mutation and cached status is escaped, freshness labeled, and read only', () => {
+  const r=runtime(); const event=r.event('메뉴');
+  const click={...event,common:{parameters:{command:'confirm-stop'}}};
+  assert.match(r.context.onCardClick(click).text,/비울까요/); assert.equal(r.props.has('QUEUE'),false);
+  r.call('pull',{clientId:randomUUID(),view:{current:{title:'<script>music</script>',status:'playing'},queue:[{title:'next'}],queueCount:1,paused:false,searchEnabled:false}});
+  const menu=r.context.onMessage(r.event('상태'));const json=JSON.stringify(menu.cardsV2);
+  assert.match(json,/&lt;script&gt;/);assert.doesNotMatch(json,/<script>/);assert.match(json,/next/);
+  assert.equal(JSON.parse(r.props.get('QUEUE')||'[]').length,0);
+  r.advance(31000);assert.match(JSON.stringify(r.context.onMessage(r.event('상태')).cardsV2),/연결이 잠시 끊겼/);
+});
+test('queue buttons cancel by stable song ID and preserve the clicking user identity', () => {
+  const r=runtime(), songId=randomUUID();
+  r.props.set('VIEW',JSON.stringify({at:r.now(),current:null,queue:[{id:songId,title:'A song'}],queueCount:1,paused:false,searchEnabled:false}));
+  const menu=r.context.onMessage(r.event('메뉴'));assert.match(JSON.stringify(menu.cardsV2),new RegExp('취소 id:'+songId));
+  const click={...r.event(''),common:{parameters:{command:'취소 id:'+songId}}};
+  const reply=r.context.onCardClick(click);assert.equal(reply.actionResponse.type,'UPDATE_MESSAGE');
+  const command=r.call('pull',{clientId:randomUUID()}).command;
+  assert.equal(command.text,'취소 id:'+songId);assert.equal(command.user,'users/test');
+});
 test('bounded properties survive Korean queue and result volume; TTL frees capacity', () => {
   const r=runtime();
-  for(let i=0;i<50;i++) assert.match(r.message('가'.repeat(500),`id${i}`),/접수/);
+  for(let i=0;i<50;i++) assert.match(r.message('추가 '+'가'.repeat(497),`id${i}`),/접수/);
   assert.match(r.message('대기열','overflow'),/가득/);
   for(let i=0;i<130;i++) assert.equal(r.call('result',{id:`result-${i}`,space:'spaces/test',user:`users/user${i}`,text:'한'.repeat(1500)}).ok,true);
   assert.ok(JSON.parse(r.props.get('RESULTS')).length<=50); assert.ok(JSON.parse(r.props.get('RECEIPTS')).length<=100);
