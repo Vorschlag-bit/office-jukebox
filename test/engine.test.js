@@ -112,3 +112,38 @@ test('corrupt disk state fails without overwriting', t => {
   const dir = mkdtempSync(join(tmpdir(), 'jukebox-')); t.after(() => rmSync(dir, { recursive: true }));
   writeFileSync(join(dir, 'state.json'), '{bad'); assert.throws(() => new Store(dir));
 });
+
+test('playlist import respects per-user and total limits, preserves order and deduplicates delivery', async () => {
+  let calls=0;const songs=Array.from({length:10},(_,i)=>({videoId:'dQw4w9WgXcQ',title:`song ${i+1}`}));
+  const {engine}=setup({maxQueue:4,perUserLimit:3,youtube:{playlist:async()=>{calls++;return songs}}});
+  engine.state.queue.push({id:'existing',title:'someone else',requestedBy:'other',expiresAt:999999});
+  const command={text:'목록 https://youtube.com/playlist?list=PL1234567890abc 2',user:'listener',eventId:'playlist-event',space:'spaces/test'};
+  const reply=await engine.command(command);assert.match(reply,/3곡/);assert.match(reply,/ 5/);
+  assert.deepEqual(engine.state.queue.map(x=>x.title),['someone else','song 2','song 3','song 4']);
+  assert.ok(engine.state.queue.slice(1).every(x=>x.requestedBy==='listener'&&x.requestSpace==='spaces/test'));
+  await engine.command(command);assert.equal(calls,1);assert.equal(engine.state.queue.length,4);
+  await assert.rejects(engine.command({...command,eventId:'another'}),{code:'QUEUE_FULL'});assert.equal(calls,1);
+});
+test('playlist failures and bad ranges leave queue unchanged; watch links remain single songs', async () => {
+  const {engine}=setup({youtube:{playlist:async()=>{throw new AppError('PLAYLIST_EMPTY','empty')},resolve:async()=>({videoId:'dQw4w9WgXcQ',title:'single'})}});
+  await assert.rejects(engine.command({text:'playlist https://youtube.com/playlist?list=PL1234567890abc'}),{code:'PLAYLIST_EMPTY'});assert.equal(engine.state.queue.length,0);
+  await assert.rejects(engine.command({text:'목록 https://youtube.com/playlist?list=PL1234567890abc 101'}),{code:'PLAYLIST_START'});
+  await engine.command({text:'추가 https://youtube.com/watch?v=dQw4w9WgXcQ&list=PL1234567890abc'});assert.equal(engine.state.queue.length,1);
+});
+test('playlist supports direct add links, starts offline then advances through actual ended events', async () => {
+  const songs=[{videoId:'dQw4w9WgXcQ',title:'one'},{videoId:'s7gef3SXSbY',title:'two'}];
+  const {engine}=setup({youtube:{playlist:async()=>songs}});
+  await engine.command({text:'추가 https://youtube.com/playlist?list=PL1234567890abc'});assert.equal(engine.state.current,null);assert.equal(engine.state.queue.length,2);
+  await engine.heartbeat('client-1234');assert.equal(engine.state.current.title,'one');
+  const sessionId=engine.state.current.sessionId;
+  await engine.playerEvent({clientId:'client-1234',sessionId,event:'playing'});
+  await engine.playerEvent({clientId:'client-1234',sessionId,event:'ended'});assert.equal(engine.state.current.title,'two');
+});
+
+test('large playlists cap each import at twenty and user quota rejects before network access', async () => {
+  let calls=0;const {engine}=setup({youtube:{playlist:async()=>{calls++;return Array.from({length:100},(_,i)=>({videoId:'dQw4w9WgXcQ',title:`song ${i}`}));}}});
+  const reply=await engine.command({text:'목록 https://youtube.com/playlist?list=PL1234567890abc',user:'test'});
+  assert.equal(engine.state.queue.length,20);assert.match(reply,/ 21/);assert.ok(reply.length<1500);
+  engine.perUserLimit=5;
+  await assert.rejects(engine.command({text:'목록 https://youtube.com/playlist?list=PL1234567890abc',user:'test'}),{code:'USER_LIMIT'});assert.equal(calls,1);
+});

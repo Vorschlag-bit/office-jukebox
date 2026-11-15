@@ -1,7 +1,70 @@
-import { AppError, check, jsonFetch, videoId } from './util.js';
+import { AppError, check, jsonFetch, videoId, boundedText } from './util.js';
+
+export function playlistId(input) {
+  try {
+    const u = new URL(input);
+    if (u.protocol !== 'https:' || u.username || u.password || u.port || !['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'].includes(u.hostname)) return null;
+    const id = u.searchParams.get('list');
+    return /^(PL|UU|LL|FL|OLAK5uy_)[A-Za-z0-9_-]{10,150}$/.test(id || '') ? id : null;
+  } catch { return null; }
+}
+
+// Read data only, never execute page scripts. Scope to playlist contents, not recommendations.
+export function parsePlaylistPage(html, id) {
+  const match = /(?:\bvar\s+ytInitialData\s*=|window\["ytInitialData"\]\s*=)\s*\{/.exec(html);
+  let data;
+  try {
+    if (!match) throw Error('missing');
+    const start = match.index + match[0].length - 1;
+    let depth = 0, quoted = false, escaped = false, end = start;
+    for (; end < html.length; end++) {
+      const char = html[end];
+      if (quoted) { if (escaped) escaped = false; else if (char === '\\') escaped = true; else if (char === '"') quoted = false; }
+      else if (char === '"') quoted = true;
+      else if (char === '{') depth++;
+      else if (char === '}' && --depth === 0) break;
+    }
+    data = JSON.parse(html.slice(start, end + 1));
+  } catch { throw new AppError('PLAYLIST_FORMAT', '재생목록을 읽지 못했어요. YouTube 화면 변경 또는 접근 제한일 수 있어요.'); }
+  const songs = [], seen = new Set();
+  function add(video, title) {
+    if (!videoId(video || '') || seen.has(video) || songs.length >= 100) return;
+    seen.add(video); songs.push({ videoId: video, title: decodeTitle(String(title || `YouTube ${video}`)).slice(0, 300), source: 'playlist' });
+  }
+  function walk(node, inList = false) {
+    if (!node || typeof node !== 'object') return;
+    if (node.playlistVideoListRenderer) { walk(node.playlistVideoListRenderer.contents, true); return; }
+    const old = node.playlistVideoRenderer;
+    if (old && inList) { if (old.isPlayable !== false) add(old.videoId, old.title?.simpleText || old.title?.runs?.map(x => x.text).join('')); return; }
+    const item = node.lockupViewModel;
+    if (item) {
+      const endpoint = item.rendererContext?.commandContext?.onTap?.innertubeCommand?.watchEndpoint;
+      if (item.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' && endpoint?.playlistId === id) add(endpoint.videoId, item.metadata?.lockupMetadataViewModel?.title?.content);
+      return;
+    }
+    for (const value of Object.values(node)) walk(value, inList);
+  }
+  walk(data.contents);
+  check(songs.length, 'PLAYLIST_EMPTY', '공개된 재생 가능한 곡을 찾지 못했어요. 비공개·삭제된 목록, 자동 믹스는 지원하지 않습니다.');
+  return songs;
+}
 
 export class YouTube {
   constructor(key = '', fetcher = fetch, now = Date.now, { resolveTitles = false } = {}) { this.key = key; this.fetcher = fetcher; this.now = now; this.cache = new Map(); this.resolveTitles = resolveTitles; }
+  async playlist(input) {
+    const id = playlistId(input);
+    check(id, 'PLAYLIST_URL', '공유된 YouTube 재생목록 링크를 넣어 주세요. 자동 믹스·라디오는 지원하지 않습니다.');
+    const hit = this.cache.get(`playlist:${id}`);
+    if (hit && hit.expires > this.now()) return structuredClone(hit.tracks);
+    let response;
+    try { response = await this.fetcher(`https://www.youtube.com/playlist?list=${id}`, { redirect: 'error', signal: AbortSignal.timeout(10000) }); }
+    catch { throw new AppError('PLAYLIST_NETWORK', '재생목록 연결에 실패했어요. 잠시 후 다시 시도해 주세요.', 502); }
+    check(response.ok, 'PLAYLIST_HTTP', '재생목록을 열지 못했어요. 공개 또는 링크 공유 목록인지 확인해 주세요.', 502);
+    const tracks = parsePlaylistPage(await boundedText(response, 5 * 1024 * 1024), id);
+    if (this.cache.size >= 200) this.cache.delete(this.cache.keys().next().value);
+    this.cache.set(`playlist:${id}`, { tracks, expires: this.now() + 60000 });
+    return structuredClone(tracks);
+  }
   async resolve(query, embedded = true) {
     return (await this.search(query, embedded))[0];
   }

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { check } from './util.js';
+import { playlistId } from './youtube.js';
 
 export class Engine {
   constructor({ store, youtube, adapter, now = Date.now, maxQueue = 50, queueTtlMs = 14400000, perUserLimit = 0, autoSkipUnplayable = false, handshakeTimeoutMs = 45000 }) {
@@ -69,7 +70,25 @@ export class Engine {
         this.state.queue.push({ ...song, id: randomUUID(), requestedBy: user, addedAt: this.now(), expiresAt: this.now() + this.queueTtlMs, requestSpace: space, requestThread: thread });
         reply = `대기열에 담았어요: ${song.title}. 현재 곡이 끝나면 순서대로 재생돼요.`;
       };
-      if (['재생', '추가', 'play', 'add'].includes(verb.toLowerCase())) {
+      const listCommand = ['목록', '재생목록', 'playlist'].includes(verb.toLowerCase());
+      const plainPlaylist = ['재생', '추가', 'play', 'add'].includes(verb.toLowerCase()) && playlistId(arg) && new URL(arg).pathname === '/playlist';
+      if (listCommand || plainPlaylist) {
+        const [url, startText = '1', ...extra] = parts;
+        check(!extra.length && /^[1-9][0-9]{0,2}$/.test(startText), 'PLAYLIST_START', '목록 <링크> [시작번호] 형식으로 입력하세요. 시작번호는 1~100입니다.');
+        const start = Number(startText);
+        check(start <= 100, 'PLAYLIST_START', '처음 공개된 최대 100곡까지 읽을 수 있어요. 시작번호는 1~100입니다.');
+        check(this.state.queue.length < this.maxQueue, 'QUEUE_FULL', '대기열이 가득 찼습니다.');
+        const remaining = this.perUserLimit ? this.perUserLimit - this.state.queue.filter(x => x.requestedBy === user).length : 20;
+        check(remaining > 0, 'USER_LIMIT', `한 사람은 대기곡을 ${this.perUserLimit}개까지 신청할 수 있습니다.`);
+        check(this.state.outbox.length < 500, 'NOTIFICATIONS_FULL', 'Chat 응답이 누적됐습니다. 운영자가 알림 상태를 확인해야 합니다.', 503);
+        const songs = await this.youtube.playlist(url);
+        check(start <= songs.length, 'PLAYLIST_START', `읽어 온 목록은 ${songs.length}곡이에요. 시작번호를 줄여 주세요.`);
+        const batch = songs.slice(start - 1, start - 1 + Math.min(20, remaining, this.maxQueue - this.state.queue.length));
+        for (const song of batch) await append(song);
+        const next = start + batch.length;
+        reply = `재생목록 ${batch.length}곡을 대기열에 담았어요 (${start}~${next - 1}번). 기존 신청곡 뒤에 순서대로 재생돼요.\n` + batch.slice(0, 5).map((song, i) => `${start + i}. ${song.title.slice(0, 100)}`).join('\n') + (batch.length > 5 ? `\n외 ${batch.length - 5}곡` : '') + `\n공개 목록의 처음 최대 100곡을 읽으며 중복·비공개 곡은 제외해요. 한 번에 최대 20곡, 개인·전체 대기열 제한을 적용합니다.`;
+        if (next <= songs.length) reply += `\n곡이 재생되어 신청 자리가 생기면 이어담기: 목록 ${url} ${next}`;
+      } else if (['재생', '추가', 'play', 'add'].includes(verb.toLowerCase())) {
         check(this.state.queue.length < this.maxQueue, 'QUEUE_FULL', '대기열이 가득 찼습니다.');
         check(!this.perUserLimit || this.state.queue.filter(x => x.requestedBy === user).length < this.perUserLimit, 'USER_LIMIT', `한 사람은 대기곡을 ${this.perUserLimit}개까지 신청할 수 있습니다.`);
         await append(await this.youtube.resolve(arg, this.adapter.type === 'browser'));
@@ -135,7 +154,7 @@ export class Engine {
           this.consecutiveFailures = 0;
           reply = stop ? (this.adapter.type === 'browser' ? '재생을 멈추고 대기열을 비웠어요.' : '정지 명령 전송 및 대기열 비움 완료. 기본 앱은 현장 정지를 확인하세요.') : '다음 곡으로 이동합니다.';
         }
-      } else reply = '명령: 추가 <곡명/URL> · 검색 <곡명> · 선택 <번호> · 취소 <대기번호> · 대기열 · 상태 · 다음 · 정지 · 일시정지 · 계속 · 재시도 · 확인. 추가는 검색 첫 결과를 신청합니다.';
+      } else reply = '명령: 추가 <곡명/URL> · 목록 <재생목록 링크> [시작번호] · 검색 <곡명> · 선택 <번호> · 취소 <대기번호> · 대기열 · 상태 · 다음 · 정지 · 일시정지 · 계속 · 재시도 · 확인. 추가는 검색 첫 결과를 신청합니다.';
       if (eventId) {
         Object.defineProperty(this.state.seen, eventId, { value: { reply: reply.slice(0, 4000), at: this.now() }, writable: true, enumerable: true, configurable: true });
         // Bound deduplication storage; delivery TTL and Pub/Sub retention are separate concerns.

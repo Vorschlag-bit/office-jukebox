@@ -48,7 +48,7 @@ function jbHandleMessage(e) {
         return jbPanel(p, space, u.name, r && Date.now() - r.at < 86400000 ? jbSafe(r.text) + '\n[노트북 처리 결과: ' + new Date(r.at).toISOString() + ']' : '아직 처리 결과가 없어요. 신청 후 잠시 기다렸다 결과 확인을 눌러 주세요.');
       }
       var verb = text.split(/\s+/)[0].toLowerCase();
-      if (['추가','재생','add','play','검색','search','선택','select','취소','cancel','대기열','queue','상태','status','일시정지','pause','계속','resume','다음','next','정지','stop','재시도','retry','확인','confirm'].indexOf(verb) < 0) return jbPanel(p, space, u.name, '버튼으로 신청하고 제어할 수 있어요. 아래에서 원하는 동작을 골라 주세요.');
+      if (['목록','재생목록','playlist','추가','재생','add','play','검색','search','선택','select','취소','cancel','대기열','queue','상태','status','일시정지','pause','계속','resume','다음','next','정지','stop','재시도','retry','확인','confirm'].indexOf(verb) < 0) return jbPanel(p, space, u.name, '버튼으로 신청하고 제어할 수 있어요. 아래에서 원하는 동작을 골라 주세요.');
       var now = Date.now(), eventAt = Date.parse(e.eventTime || (e.chat && e.chat.eventTime) || m.createTime || '');
       if (!isFinite(eventAt) || now - eventAt > JB_TTL || eventAt - now > 60000) return { text: '만료되었거나 시간이 잘못된 요청입니다. 새 명령을 보내세요.' };
       var secret = p.getProperty('SHARED_SECRET');
@@ -129,8 +129,8 @@ function jbPanel(p, space, user, message) {
   }
   widgets.push({ buttonList: { buttons: [jbButton('↻ 상태 새로고침', '메뉴'), jbButton('내 신청 결과 확인', '결과')] } });
   var sections = [{ widgets: widgets }, { header: '노래 신청', widgets: [
-    { textInput: { name: 'song', label: view && view.searchEnabled ? 'YouTube 링크 또는 곡명' : 'YouTube 영상 링크', hintText: 'YouTube → 공유 → 링크 복사', type: 'SINGLE_LINE' } },
-    { buttonList: { buttons: view && view.searchEnabled ? [jbButton('＋ 신청하기', 'submit-add', 'song'), jbButton('검색해서 고르기', 'submit-search', 'song')] : [jbButton('＋ 신청하기', 'submit-add', 'song')] } }
+    { textInput: { name: 'song', label: view && view.searchEnabled ? 'YouTube 링크 또는 곡명' : 'YouTube 영상 링크', hintText: '영상·재생목록 → 공유 → 링크 복사. 목록은 목록 담기 버튼!', type: 'SINGLE_LINE' } },
+    { buttonList: { buttons: view && view.searchEnabled ? [jbButton('＋ 신청하기', 'submit-add', 'song'), jbButton('♫ 목록 담기', 'submit-playlist', 'song'), jbButton('검색해서 고르기', 'submit-search', 'song')] : [jbButton('＋ 신청하기', 'submit-add', 'song'), jbButton('♫ 목록 담기', 'submit-playlist', 'song')] } }
   ] }];
   var result = jbRead(p, 'r_' + jbHash(space + '/' + user), null);
   if (result && Date.now() - result.at < 300000 && /5분 이내에 선택/.test(result.text)) {
@@ -157,7 +157,7 @@ function jbHandleClick(e) {
     if (!/^spaces\/[A-Za-z0-9_-]+$/.test(space || '') || !/^users\/[A-Za-z0-9_-]+$/.test(user.name || '') || user.type === 'BOT') return { text: '지원하지 않는 이벤트입니다.' };
     if (jbSpaces(jbProps()).indexOf(space) < 0) return { text: '허용되지 않은 스페이스입니다.' };
     if (command === 'confirm-stop') return { actionResponse: { type: 'UPDATE_MESSAGE' }, text: '재생을 멈추고 대기열을 모두 비울까요?', cardsV2: [{ cardId: 'confirm-stop', card: { sections: [{ widgets: [{ buttonList: { buttons: [jbButton('돌아가기', '메뉴'), jbButton('정지하고 모두 비우기', '정지')] } }] }] } }] };
-    if (command === 'submit-add' || command === 'submit-search') { var song = field('song'); if (!song || song.length > 300) return { text: 'YouTube 영상 링크 또는 곡명을 입력해 주세요. 최대 300자입니다.' }; command = (command === 'submit-add' ? '추가 ' : '검색 ') + song; }
+    if (command === 'submit-add' || command === 'submit-search' || command === 'submit-playlist') { var song = field('song'); if (!song || song.length > 300) return { text: 'YouTube 영상 링크 또는 곡명을 입력해 주세요. 최대 300자입니다.' }; command = (command === 'submit-add' ? '추가 ' : command === 'submit-playlist' ? '목록 ' : '검색 ') + song; }
     else if (command === 'submit-cancel') { var number = field('cancelNumber'); if (!/^[1-9][0-9]*$/.test(number)) return { text: '취소할 대기번호를 숫자로 입력해 주세요.' }; command = '취소 ' + number; }
     else if (!/^(메뉴|결과|일시정지|계속|다음|정지|재시도|선택 [1-5]|취소 id:[a-f0-9-]{36})$/.test(command || '')) return { text: '지원하지 않는 버튼입니다. 새 메뉴를 열어 주세요.' };
     var at = e.eventTime || '', name = e.message && e.message.name || '';

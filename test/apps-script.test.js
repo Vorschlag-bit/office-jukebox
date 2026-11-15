@@ -206,3 +206,13 @@ test('Usagi voice decorates reception, playback, and errors exactly once without
   assert.match(r.context.onMessage(r.event('정지',undefined,'users/test','spaces/other')).text,/^하아/);
   assert.equal(r.call('check').ok,true);
 });
+
+test('playlist card submits through the same authorized durable Chat command path', async () => {
+  const r=runtime(), url='https://www.youtube.com/playlist?list=PL1234567890abc';
+  const menu=r.context.onMessage(r.event('메뉴'));assert.match(JSON.stringify(menu.cardsV2),/♫ 목록 담기/);
+  const click={eventTime:new Date(r.now()).toISOString(),space:{name:'spaces/test'},user:{name:'users/test',type:'HUMAN'},message:{name:'spaces/test/messages/menu'},common:{parameters:{command:'submit-playlist'},formInputs:{song:{'':{stringInputs:{value:[url]}}}}}};
+  assert.match(r.context.onCardClick(click).text,/야하.*접수/s);
+  assert.match(r.context.onCardClick(click).text,/이미/);
+  const pulled=r.call('pull',{clientId:randomUUID()}).command;assert.equal(pulled.text,'목록 '+url);
+  assert.match(r.context.onCardClick({...click,space:{name:'spaces/other'}}).text,/허용되지/);
+});
