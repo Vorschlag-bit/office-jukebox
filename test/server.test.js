@@ -70,6 +70,8 @@ test('only allowlisted assets served; config and traversal inaccessible', async 
   for (const path of ['/config.local.json', '/data/state.json', '/../src/main.js', '/src/main.js']) assert.equal((await fetch(base + path)).status, 404);
   const r = await fetch(base + '/'); assert.equal(r.status, 200); assert.match(r.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
   assert.match(await r.text(), /Office Jukebox/); assert.equal(r.headers.get('Referrer-Policy'), 'strict-origin-when-cross-origin');
+  const wallpaper = await fetch(base + '/usagi-wallpaper.jpg'); assert.equal(wallpaper.status, 200); assert.equal(wallpaper.headers.get('Content-Type'), 'image/jpeg');
+  assert.deepEqual([...new Uint8Array(await wallpaper.arrayBuffer()).slice(0, 3)], [255, 216, 255]);
 });
 test('JSON null and arrays cannot crash API handlers', async t => {
   const { base } = await start(t);
