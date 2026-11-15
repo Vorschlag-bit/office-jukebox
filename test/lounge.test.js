@@ -131,3 +131,78 @@ test('cancelled long poll preserves session while an actual network failure inva
   await assert.rejects(client.poll(controller.signal)); assert.equal(client.sid, 'sid');
   await assert.rejects(client.poll(new AbortController().signal)); assert.equal(client.sid, null);
 });
+
+test('command POST frames participate in nonce verification instead of discarding TV events', async () => {
+  const seen=[];
+  const client=new LoungeClient({}, {fetcher:async()=>response(framed([[12,['nowPlaying',{videoId:track.videoId,cpn:'live',state:1}]]])),onEvent:e=>seen.push(e)});
+  client.sid='s';client.gsession='g';client.epoch=1;client.aid=10;
+  await client.command('getNowPlaying');assert.equal(seen[0].name,'nowPlaying');assert.equal(client.aid,12);
+});
+test('TV autoplay disabled before each track and reasserted if TV enables recommendations', async t => {
+  const {adapter,calls,send}=adapterFixture(t);await adapter.play(track);
+  assert.equal(calls[0].name,'setAutoplayMode');assert.equal(calls[0].params.autoplayMode,'DISABLED');
+  assert.equal(calls.filter(x=>x.name==='setPlaylist').length,1);
+  send(11,'onAutoplayModeChanged',{autoplayMode:'ENABLED'});await new Promise(r=>setImmediate(r));
+  assert.equal(calls.filter(x=>x.name==='setPlaylist').length,1);assert.equal(calls.filter(x=>x.name==='setAutoplayMode').length,3);
+  send(12,'onAutoplayModeChanged',{autoplayMode:'DISABLED'});assert.equal(adapter.info().autoplayMode,'DISABLED');
+});
+test('new BrowserChannel AID sequence remains usable without accepting mismatched playback nonces', async t => {
+  const {adapter,events,send}=adapterFixture(t);await adapter.play(track);
+  send(90,'nowPlaying',{videoId:track.videoId,cpn:'live',state:1});
+  adapter.client.epoch++;adapter.client.aid=0;
+  send(1,'nowPlaying',{videoId:track.videoId,cpn:'live',state:1});
+  send(2,'onStateChange',{cpn:'stale',state:0});assert.equal(events.filter(x=>x.event==='ended').length,0);
+  send(3,'onStateChange',{cpn:'live',state:0});assert.equal(events.filter(x=>x.event==='ended').length,1);
+});
+test('explicit status query recovers a missed end only from matching real state=0', async t => {
+  const {adapter,send}=adapterFixture(t);
+  const engine=new Engine({store:new MemoryStore(),youtube:{resolve:async()=>({videoId:track.videoId,title:'queued'})},adapter});
+  await engine.command({text:'추가 first'});await engine.command({text:'추가 next'});
+  send(11,'nowPlaying',{videoId:track.videoId,cpn:'one',state:1});await engine.chain;
+  const current=engine.state.current.sessionId, command=adapter.client.command;
+  adapter.client.command=async(name,params)=>{if(name==='getNowPlaying') send(12,'nowPlaying',{videoId:track.videoId,cpn:'one',state:0});return command(name,params)};
+  await adapter.requestStatus();await engine.chain;
+  assert.notEqual(engine.state.current.sessionId,current);assert.equal(engine.state.history.length,1);
+  assert.equal(engine.state.history[0].status,'ended');
+});
+test('restart attaches to existing TV playback without replay, retaining queued IDs and order', async t => {
+  const first=adapterFixture(t),store=new MemoryStore();
+  const original=new Engine({store,youtube:{resolve:async q=>({videoId:track.videoId,title:q})},adapter:first.adapter});
+  await original.command({text:'추가 one'});await original.command({text:'추가 two'});await original.command({text:'추가 three'});
+  first.send(11,'nowPlaying',{videoId:track.videoId,cpn:'original',state:1});await original.chain;
+  const ids=store.state.queue.map(x=>x.id), session=store.state.current.sessionId;first.adapter.close();
+  const second=adapterFixture(t),restored=new Engine({store,youtube:{},adapter:second.adapter});
+  assert.equal(store.state.current.status,'recovery_required');await restored.start();
+  assert.equal(second.calls.some(x=>['setPlaylist','play','seekTo'].includes(x.name)),false);
+  second.send(11,'nowPlaying',{videoId:'aaaaaaaaaaa',cpn:'other',state:1});await restored.chain;assert.equal(store.state.current.status,'recovery_required');
+  second.send(12,'nowPlaying',{videoId:track.videoId,cpn:'existing-live',state:1});await restored.chain;
+  assert.equal(store.state.current.status,'playing');assert.equal(store.state.current.sessionId,session);assert.deepEqual(store.state.queue.map(x=>x.id),ids);
+  second.send(13,'onStateChange',{cpn:'existing-live',state:0});await restored.chain;assert.equal(store.state.current.id,ids[0]);assert.equal(store.state.queue[0].id,ids[1]);
+});
+
+test('receiver empty-item end needs two real snapshots separated by a new status query', async t => {
+  const {adapter,send,events}=adapterFixture(t);await adapter.play(track);
+  await adapter.requestStatus();
+  send(11,'nowPlaying',{});assert.equal(events.length,0);
+  send(12,'nowPlaying',{videoId:track.videoId,cpn:'live',state:1});
+  send(13,'nowPlaying',{});send(14,'nowPlaying',{});assert.equal(events.some(x=>x.event==='idle'),false);
+  await adapter.requestStatus();send(15,'nowPlaying',{});send(16,'nowPlaying',{});
+  assert.equal(events.filter(x=>x.event==='idle').length,1);
+});
+test('empty snapshots cannot advance paused, buffering, ad or newly reconnected playback', async t => {
+  for(const mode of ['paused','buffering','ad','reconnected']) {
+    const {adapter,send,events}=adapterFixture(t);await adapter.play(track);send(11,'nowPlaying',{videoId:track.videoId,cpn:'live',state:1});
+    if(mode==='paused'||mode==='buffering') send(12,'onStateChange',{cpn:'live',state:mode==='paused'?2:3});
+    if(mode==='ad') send(12,'adPlaying',{adState:1});
+    if(mode==='reconnected') adapter.client.epoch++;
+    send(13,'nowPlaying',{});await adapter.requestStatus();send(14,'nowPlaying',{});
+    assert.equal(events.some(x=>x.event==='idle'),false,mode);
+  }
+});
+test('verified receiver idle advances queued item without pretending it was a nonce-confirmed natural end', async t => {
+  const {adapter,send}=adapterFixture(t);const store=new MemoryStore();const engine=new Engine({store,youtube:{resolve:async()=>({videoId:track.videoId,title:'song'})},adapter});
+  await engine.command({text:'추가 first'});await engine.command({text:'추가 next'});const next=store.state.queue[0].id;
+  send(11,'nowPlaying',{videoId:track.videoId,cpn:'first',state:1});await engine.chain;
+  send(12,'nowPlaying',{});await adapter.requestStatus();send(13,'nowPlaying',{});await engine.chain;
+  assert.equal(store.state.current.id,next);assert.equal(store.state.history[0].status,'tv_idle');
+});

@@ -105,6 +105,7 @@ async function main() {
   server.listen(config.port, config.host, () => {
     console.log(`Office Jukebox: http://${config.host}:${server.address().port}`);
     console.log('관리 화면 / · 재생 화면 /player · 토큰은 config.local.json에서 확인');
+    void engine.start().catch(error => console.warn(`STARTUP_RECOVERY: ${error.code || 'TV_STATE_UNKNOWN'}. 대기열은 보존됐습니다.`));
     if (worker) void worker.start();
   });
   const watchdog = setInterval(() => { void engine.tick().catch(() => console.warn('STATE_WRITE: 저장소 상태를 확인하세요.')); }, 2000);

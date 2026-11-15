@@ -12,6 +12,12 @@ export class Engine {
     if (this.state.current) { this.state.current.status = 'recovery_required'; store.save(); }
   }
   get state() { return this.store.state; }
+  async start() {
+    return this.serial(async () => {
+      if (this.state.current && typeof this.adapter.attach === 'function') await this.adapter.attach(this.state.current);
+      else if (!this.state.current) await this.dispatch();
+    });
+  }
   serial(work) {
     const result = this.chain.then(work);
     this.chain = result.catch(() => {});
@@ -214,9 +220,15 @@ export class Engine {
       return this.snapshot();
     });
   }
-  async nativeEvent({ sessionId, videoId, event }) {
+  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false }) {
     return this.serial(async () => {
-      if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId || ['recovery_required', 'error'].includes(this.state.current.status)) return false;
+      if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId || this.state.current.status === 'error') return false;
+      if (this.state.current.status === 'recovery_required' && !(this.adapter.type === 'lounge' && verifiedObservation && ['playing', 'paused', 'ended'].includes(event))) return false;
+      if (event === 'idle' && this.adapter.type === 'lounge' && verifiedObservation && this.state.current.observedPlaying && !this.state.paused && this.state.current.desiredState !== 'paused') {
+        // Receiver explicitly cleared its item twice. Preserve the distinction
+        // from a nonce-bound natural end (it could also be a TV-side stop).
+        this.archive('tv_idle'); this.consecutiveFailures = 0; this.store.save(); await this.dispatch(); return true;
+      }
       if (event === 'offline' || event === 'external') { this.state.current.status = 'recovery_required'; this.notify(event === 'external' ? 'TV에서 다른 영상으로 변경됐습니다. 대기열을 진행하려면 재시도 또는 다음을 선택하세요.' : '기기 연결이 끊겼습니다. 실제 재생을 확인한 뒤 재시도 또는 다음을 선택하세요.'); this.store.save(); return true; }
       if (!['playing', 'paused', 'ended', 'buffering'].includes(event)) return false;
       await this.applyPlayback(event); return true;

@@ -94,7 +94,11 @@ export class LoungeClient {
       const query = new URLSearchParams({ ...this.params(), RID: String(this.rid++) });
       const form = { count: '1', ofs: String(this.offset++), req0__sc: name };
       for (const [key, value] of Object.entries(values)) form[`req0_${key}`] = String(value);
-      try { await loungeResponse(`bc/bind?${query}`, form, { fetcher: this.fetcher }); }
+      try {
+        const reply = await loungeResponse(`bc/bind?${query}`, form, { fetcher: this.fetcher });
+        // Command responses can carry state events too, not just the streaming GET.
+        if (epoch === this.epoch && /^\s*\d+\n/.test(reply)) new LoungeFrames(event => this.consume(event)).push(Buffer.from(reply));
+      }
       catch (error) { if (epoch === this.epoch) this.sid = null; throw error; }
       // HTTP acceptance is not playback confirmation. Never blindly replay a timed-out command.
       return { confirmed: false };
@@ -121,18 +125,63 @@ export class LoungeAdapter {
   constructor(config, dependencies = {}) {
     check(config.experimental === true, 'LOUNGE_OPT_IN', 'TV 코드 제어는 비공식 프로토콜입니다. 안내를 확인하고 experimental을 켜세요.');
     this.config = config; this.listener = () => {}; this.target = null; this.lastCpn = null; this.online = false;
+    this.autoplayMode = 'UNKNOWN'; this.policyError = null; this.statusQueries = 0;
     this.client = dependencies.client || new LoungeClient(config, { ...dependencies, onEvent: event => this.handle(event) });
     this.client.onEvent = event => this.handle(event);
     this.controller = new AbortController();
   }
   setListener(listener) { this.listener = listener; }
-  info() { return { type: this.type, nativeApp: true, automaticQueue: true, verification: 'video-id-and-playback-nonce', experimental: true, online: this.online }; }
-  emit(event) { if (this.target) this.listener({ sessionId: this.target.sessionId, videoId: this.target.videoId, event }); }
+  info() { return { type: this.type, nativeApp: true, automaticQueue: true, verification: 'video-id-and-playback-nonce', experimental: true, online: this.online, autoplayMode: this.autoplayMode, policyError: this.policyError, statusQueries: this.statusQueries }; }
+  emit(event, extra = {}) { if (this.target) this.listener({ sessionId: this.target.sessionId, videoId: this.target.videoId, event, ...extra }); }
+  async disableAutoplay() {
+    if (this.autoplayRequest) return this.autoplayRequest;
+    this.autoplayRequest = this.client.command('setAutoplayMode', { autoplayMode: 'DISABLED' }).then(() => { this.policyError = null; }).catch(error => { this.policyError = error.code || 'AUTOPLAY_POLICY'; throw error; }).finally(() => { this.autoplayRequest = null; });
+    return this.autoplayRequest;
+  }
+  startMonitoring() {
+    if (!this.monitoring) { this.monitoring = true; void this.monitor(); }
+    if (!this.statusTimer) {
+      this.statusTimer = setInterval(() => { void this.requestStatus(); }, 3000);
+      this.statusTimer.unref();
+    }
+  }
+  async requestStatus() {
+    if (this.statusRequest) return this.statusRequest;
+    if (!this.target || this.controller.signal.aborted) return;
+    this.statusQueries++;
+    this.statusRequest = this.client.command('getNowPlaying').catch(() => {}).finally(() => { this.statusRequest = null; });
+    return this.statusRequest;
+  }
   handle(event) {
+    if (this.controller.signal.aborted) return;
+    if (event.name === 'onAutoplayModeChanged') {
+      this.autoplayMode = event.args[0]?.autoplayMode === 'DISABLED' ? 'DISABLED' : event.args[0]?.autoplayMode === 'ENABLED' ? 'ENABLED' : 'UNKNOWN';
+      if (this.autoplayMode === 'ENABLED' && this.target) void this.disableAutoplay().catch(() => {});
+      return;
+    }
     if (event.name === 'loungeScreenDisconnected') { this.online = false; this.emit('offline'); this.client.sid = null; return; }
     const target = this.target, payload = event.args[0];
+    // AID restarts at zero after a new BrowserChannel session. Old sessions are
+    // already fenced by LoungeClient. Do not discard the new session forever.
+    if (target && target.epoch !== this.client.epoch) { target.epoch = this.client.epoch; target.afterAid = -1; target.idleQuery = null; target.liveEpoch = null; }
     if (!target || !payload || typeof payload !== 'object' || event.id <= target.afterAid) return;
+    if (event.name === 'adPlaying' || event.name === 'onAdStateChange') {
+      const state = Number(payload.adState);
+      target.adActive = ![0, -1].includes(state); target.idleQuery = null; return;
+    }
     if (event.name === 'nowPlaying') {
+      // Some receivers clear the item completely at its end: nowPlaying {}.
+      // Confirm that actual idle snapshot on a later explicit query, after this
+      // session observed playback. Never use duration/elapsed time as an end.
+      if (!payload.videoId && !payload.cpn && (payload.state === undefined || Number(payload.state) === 0)) {
+        if (target.playing && target.lastState === 1 && target.liveEpoch === this.client.epoch && !target.adActive && !target.finished) {
+          if (target.idleQuery !== null && target.idleQuery !== undefined && this.statusQueries > target.idleQuery) {
+            target.finished = true; this.emit('idle', { verifiedObservation: true });
+          } else if (target.idleQuery === null || target.idleQuery === undefined) target.idleQuery = this.statusQueries;
+        }
+        return;
+      }
+      target.idleQuery = null;
       if (payload.videoId && payload.videoId !== target.videoId && target.playing) { this.emit('external'); return; }
       if (payload.videoId !== target.videoId || !payload.cpn || payload.cpn === target.previousCpn) return;
       target.cpn = String(payload.cpn);
@@ -140,19 +189,33 @@ export class LoungeAdapter {
     // onStateChange lacks videoId. Only a matching playback nonce may complete this request.
     if (!target.cpn || payload.cpn !== target.cpn || (payload.videoId && payload.videoId !== target.videoId)) return;
     const state = Number(payload.state);
-    if (state === 1) { target.playing = true; this.online = true; this.lastCpn = target.cpn; this.emit('playing'); }
+    target.lastState = state; target.idleQuery = null;
+    if (state === 1) { target.playing = true; target.liveEpoch = this.client.epoch; this.online = true; this.lastCpn = target.cpn; this.emit('playing', { verifiedObservation: true }); }
+    else if (state === 2 && target.observing) { this.online = true; this.emit('paused', { verifiedObservation: true }); }
     else if (state === 2 && target.playing) this.emit('paused');
     else if (state === 3 && target.playing) this.emit('buffering');
-    else if (state === 0 && target.playing && !target.finished) { target.finished = true; this.emit('ended'); }
+    else if (state === 0 && target.playing && !target.finished) { target.finished = true; this.emit('ended', { verifiedObservation: true }); }
   }
   async play(track) {
     check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
     await this.client.connect();
     check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
-    this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, previousCpn: this.lastCpn, cpn: null, playing: false, finished: false };
+    await this.disableAutoplay();
+    this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, epoch: this.client.epoch, previousCpn: this.lastCpn, cpn: null, playing: false, finished: false };
     const result = await this.client.command('setPlaylist', { videoId: track.videoId, videoIds: track.videoId, currentIndex: 0, currentTime: 0 });
-    if (!this.monitoring) { this.monitoring = true; void this.monitor(); }
+    this.startMonitoring();
+    await this.disableAutoplay().catch(() => {});
+    void this.requestStatus();
     return result;
+  }
+  async attach(track) {
+    check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
+    await this.client.connect();
+    // Observe the already-playing item after restart; never issue play/seek here.
+    this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, epoch: this.client.epoch, previousCpn: null, cpn: null, playing: false, finished: false, observing: true };
+    this.startMonitoring();
+    await this.disableAutoplay().catch(() => {});
+    await this.requestStatus();
   }
   async monitor() {
     let backoff = 1000;
@@ -171,5 +234,5 @@ export class LoungeAdapter {
   async pause() { return this.client.command('pause'); }
   async resume() { return this.client.command('play'); }
   async stop() { const result = await this.client.command('pause'); this.target = null; return result; }
-  close() { this.target = null; this.controller.abort(); }
+  close() { this.target = null; clearInterval(this.statusTimer); this.controller.abort(); }
 }
