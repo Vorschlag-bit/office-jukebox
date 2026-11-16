@@ -21,6 +21,7 @@ export function loadConfig(path) {
   check(typeof c.playerToken === 'string' && c.playerToken.length >= 32 && c.playerToken !== c.adminToken && !c.playerToken.includes('RANDOM'), 'CONFIG', '서로 다른 32자 이상의 재생기 토큰이 필요합니다.');
   check(Number.isInteger(c.port) && c.port >= 0 && c.port <= 65535, 'CONFIG', '잘못된 포트 번호');
   check(typeof c.host === 'string' && c.adapter?.type, 'CONFIG', 'host와 adapter.type이 필요합니다.');
+  check(c.lan === undefined || (c.lan && typeof c.lan.enabled === 'boolean'), 'CONFIG', 'lan.enabled는 true 또는 false여야 합니다.');
   check(Number.isInteger(c.maxQueue) && c.maxQueue > 0 && c.maxQueue <= 500 && Number.isInteger(c.queueTtlMs) && c.queueTtlMs >= 60000, 'CONFIG', '대기열 한도와 만료 시간을 확인하세요.');
   c.perUserLimit ??= 5; c.autoSkipUnplayable ??= true; c.handshakeTimeoutMs ??= 45000;
   check(Number.isInteger(c.perUserLimit) && c.perUserLimit >= 0 && c.perUserLimit <= 100, 'CONFIG', 'perUserLimit는 0~100 사이 정수여야 합니다.');

@@ -61,3 +61,12 @@ button.secondary{background:#f9e1e4;color:#8b5f64}button.secondary:hover:not(:di
 .dashboard-page .empty-state strong{max-width:235px;line-height:1.7}
 @media(max-width:1180px){.dashboard-page .room-header{background-size:auto,auto 285px}.dashboard-page .sidebar:after{left:19px;right:19px}}
 @media(max-width:680px){.dashboard-page .room-header{background:linear-gradient(90deg,#fff7e9fa 5%,#fff7e9e8 36%,#fff7e944 70%),url('/usagi-cheer.jpg') 65% 50%/auto 310px no-repeat,#fff7e9}.dashboard-page .empty-mascot{max-width:270px}.dashboard-page .empty-state{min-height:250px}}
+
+/* Read-only shared LAN playlist. */
+.shared-shell{max-width:960px;margin:0 auto;padding:28px 22px 44px;display:grid;gap:22px}
+.shared-header{display:flex;justify-content:space-between;align-items:center;gap:16px}.shared-header .brand{margin:0}.shared-header>a.secondary{padding:10px 14px;text-decoration:none;white-space:nowrap}
+.shared-current{display:flex;align-items:center;gap:22px}.shared-current>img{width:160px;aspect-ratio:16/10;object-fit:cover;border-radius:20px}.shared-current h1{font-size:clamp(20px,4vw,30px);line-height:1.45;margin:8px 0;overflow-wrap:anywhere}
+#shared-queue{list-style:none;padding:0}#shared-queue li{display:flex;align-items:center;gap:16px;padding:14px 0;border-bottom:1px solid var(--line,#eee0cf)}#shared-queue .queue-title{overflow-wrap:anywhere}.shared-note{text-align:center;color:#806c58;line-height:1.8}
+@media(max-width:560px){.shared-shell{padding:18px 12px}.shared-header .brand small{font-size:10px}.shared-header>a.secondary{font-size:12px}.shared-current{flex-direction:column;align-items:flex-start}.shared-current>img{width:100%;max-height:200px}.shared-header .brand img{width:45px;height:45px}}
+
+.shared-shell .shared-current{min-height:210px}.shared-shell [hidden]{display:none!important}.shared-header>a.secondary{background:#fff8eae8;border:1px solid #e7cf9e;border-radius:14px}.shared-shell .queue-number{min-width:22px}.shared-shell .queue-title{font-size:14px}

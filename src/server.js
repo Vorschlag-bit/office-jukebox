@@ -6,6 +6,20 @@ import { check, equalSecret, AppError } from './util.js';
 
 const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/player': ['player.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'], '/player.js': ['player.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/avatar.png': ['avatar.png', 'image/png'], '/usagi-wallpaper.jpg': ['usagi-wallpaper.jpg', 'image/jpeg'], '/usagi-teatime.jpg': ['usagi-teatime.jpg', 'image/jpeg'], '/usagi-cheer.jpg': ['usagi-cheer.jpg', 'image/jpeg'], '/usagi-snack.jpg': ['usagi-snack.jpg', 'image/jpeg'] };
+assets['/queue'] = ['queue.html', 'text/html; charset=utf-8'];
+assets['/queue.js'] = ['queue.js', 'text/javascript; charset=utf-8'];
+function privatePeer(address = '') {
+  address = address.replace(/^::ffff:/, '');
+  return address === '::1' || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address);
+}
+function validHost(req) {
+  try {
+    const url = new URL('http://' + req.headers.host);
+    const local = req.socket.localAddress?.replace(/^::ffff:/, '');
+    const name = url.hostname.replace(/^\[|\]$/g, '');
+    return !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash && Number(url.port || 80) === req.socket.localPort && (name === local || (privatePeer(req.socket.remoteAddress) && ['localhost', '127.0.0.1', '::1'].includes(name) && ['127.0.0.1','::1'].includes(local)));
+  } catch { return false; }
+}
 async function readJson(req) {
   const chunks = []; let size = 0;
   for await (const chunk of req) { size += chunk.length; check(size <= 8192, 'BODY_SIZE', '요청 크기가 너무 큽니다.', 413); chunks.push(chunk); }
@@ -26,6 +40,11 @@ export function createServer({ engine, config, diagnostics = () => ({}) }) {
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com; frame-src 'self' https://www.youtube.com; style-src 'self'; img-src 'self' https://i.ytimg.com; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors " + (embeddedPlayer ? "'self'" : "'none'"));
     const send = (status, value) => { if (!res.headersSent) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); } };
     try {
+      // Binding to LAN never trusts forwarded headers or arbitrary DNS hosts.
+      if (config.lan?.enabled) {
+        check(privatePeer(req.socket.remoteAddress), 'LAN_ONLY', '내부 네트워크에서만 접근할 수 있습니다.', 403);
+        check(validHost(req), 'HOST', '이 컴퓨터의 내부 IP 주소로 접속해 주세요.', 403);
+      }
       const url = new URL(req.url, 'http://localhost');
       if (req.method === 'GET' && assets[url.pathname]) {
         const [file, mime] = assets[url.pathname];
@@ -33,18 +52,24 @@ export function createServer({ engine, config, diagnostics = () => ({}) }) {
       }
       if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true });
       check(url.pathname.startsWith('/api/'), 'NOT_FOUND', '없는 경로입니다.', 404);
-      const player = url.pathname.startsWith('/api/player/');
-      const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-      for (const [key, until] of playbackSessions) if (until <= Date.now()) playbackSessions.delete(key);
-      check(equalSecret(bearer, player ? config.playerToken : config.adminToken) || (player && playbackSessions.has(bearer)), 'AUTH', '연결 키를 확인해 주세요. 관리 화면과 재생 화면의 키는 서로 다릅니다.', 401);
+      if (url.pathname === '/api/public/queue') check(config.lan?.enabled === true, 'NOT_FOUND', '공유 플리가 꺼져 있습니다.', 404);
       const ip = req.socket.remoteAddress || 'unknown';
       const bucket = buckets.get(ip) || { since: Date.now(), count: 0 };
       if (Date.now() - bucket.since > 60000) { bucket.since = Date.now(); bucket.count = 0; }
       bucket.count++; buckets.set(ip, bucket);
       check(bucket.count <= 180, 'RATE_LIMIT', '요청이 너무 많습니다.', 429);
-      if (buckets.size > 1000) for (const [key, item] of buckets) if (Date.now() - item.since > 60000) buckets.delete(key);
+      if (buckets.size > 1000) buckets.delete(buckets.keys().next().value);
+      if (req.method === 'GET' && url.pathname === '/api/public/queue') {
+        const state = engine.snapshot();
+        const song = x => x ? { title: x.title, videoId: x.videoId, status: x.status } : null;
+        return send(200, { current: song(state.current), queue: state.queue.map(song), paused: state.paused });
+      }
+      const player = url.pathname.startsWith('/api/player/');
+      const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+      for (const [key, until] of playbackSessions) if (until <= Date.now()) playbackSessions.delete(key);
+      check(equalSecret(bearer, player ? config.playerToken : config.adminToken) || (player && playbackSessions.has(bearer)), 'AUTH', '연결 키를 확인해 주세요. 관리 화면과 재생 화면의 키는 서로 다릅니다.', 401);
       if (req.method === 'GET' && url.pathname === '/api/state') return send(200, engine.snapshot());
-      if (req.method === 'GET' && url.pathname === '/api/capabilities') return send(200, { searchEnabled: !!config.youtubeApiKey, embeddedPlayer: engine.adapter.type === 'browser' });
+      if (req.method === 'GET' && url.pathname === '/api/capabilities') return send(200, { searchEnabled: !!config.youtubeApiKey, embeddedPlayer: engine.adapter.type === 'browser', sharedQueueEnabled: config.lan?.enabled === true });
       if (req.method === 'GET' && url.pathname === '/api/diagnostics') return send(200, { ...diagnostics(), queue: engine.state.queue.length, status: engine.state.current?.status || 'idle', notifications: { pending: engine.state.outbox.length, failed: engine.state.deadLetters?.length || 0 }, adapter: engine.adapter.info() });
       check(req.method === 'POST', 'METHOD', 'POST 요청이 필요합니다.', 405);
       // No CORS and no credentials in query strings. Reject cross-origin browser writes.

@@ -7,8 +7,8 @@ import { MemoryStore } from '../src/store.js';
 import { YouTube } from '../src/youtube.js';
 import { BrowserAdapter } from '../src/adapters.js';
 
-async function start(t) {
-  const config = { adminToken: 'a'.repeat(40), playerToken: 'p'.repeat(40) };
+async function start(t, options = {}) {
+  const config = { adminToken: 'a'.repeat(40), playerToken: 'p'.repeat(40), ...options };
   const engine = new Engine({ store: new MemoryStore(), youtube: new YouTube(), adapter: new BrowserAdapter() });
   const server = createServer({ engine, config });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -97,4 +97,25 @@ test('diagnostics disclose counts only; dead-letter replay is admin-only and pre
   const diagnostic = await (await api('/api/diagnostics')).json(); assert.equal(diagnostic.notifications.failed, 1); assert.equal(diagnostic.adminToken, undefined);
   assert.equal((await api('/api/retry-notifications', {}, 'player')).status, 401);
   assert.equal((await (await api('/api/retry-notifications', {})).json()).requeued, 1); assert.equal(engine.state.outbox[0].id, 'test-reply-id');
+});
+
+test('LAN shared queue is opt-in, read-only, identity-free and cannot authenticate as admin or player', async t => {
+  const disabled=await start(t);assert.equal((await fetch(disabled.base+'/api/public/queue')).status,404);
+  const {api,base,engine}=await start(t,{lan:{enabled:true}});
+  await engine.command({text:'추가 https://youtu.be/dQw4w9WgXcQ',user:'users/private-requester',space:'spaces/private'});
+  await engine.heartbeat('real-player');const session=engine.state.current.sessionId;
+  await engine.command({text:'추가 https://youtu.be/s7gef3SXSbY',user:'users/private-next',space:'spaces/private'});
+  const before=JSON.stringify(engine.state);const r=await fetch(base+'/api/public/queue');assert.equal(r.status,200);assert.equal(r.headers.get('Access-Control-Allow-Origin'),null);
+  const s=await r.json();assert.equal(s.current.videoId,'dQw4w9WgXcQ');assert.equal(s.queue[0].videoId,'s7gef3SXSbY');assert.doesNotMatch(JSON.stringify(s),/sessionId|requestedBy|private|adapter|notifications|addedAt|history/);assert.ok(!JSON.stringify(s).includes(session));
+  assert.equal(JSON.stringify(engine.state),before);
+  for(const path of ['/api/state','/api/diagnostics','/api/playback-session','/api/command','/api/player/poll']) {assert.equal((await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json'},body:'{"text":"정지"}'})).status,401);}
+  assert.equal(JSON.stringify(engine.state),before);assert.equal((await api('/api/state')).status,200);
+  assert.equal((await api('/api/command',{text:'정지'},'admin',{Origin:'http://evil.example'})).status,403);
+  assert.equal((await fetch(base+'/queue')).status,200);assert.equal((await fetch(base+'/queue.js')).status,200);
+});
+test('LAN mode rejects forged DNS hosts and applies request limits before anonymous queue reads', async t => {
+  const {base}=await start(t,{lan:{enabled:true}}),url=new URL(base);
+  const forged=await new Promise((resolve,reject)=>{const req=http.get(base+'/api/public/queue',{headers:{Host:'evil.example:'+url.port}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);});assert.equal(forged,403);
+  for(let i=0;i<180;i++)assert.equal((await fetch(base+'/api/public/queue')).status,200);
+  assert.equal((await fetch(base+'/api/public/queue')).status,429);
 });
