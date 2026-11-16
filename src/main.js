@@ -22,6 +22,7 @@ export function loadConfig(path) {
   check(Number.isInteger(c.port) && c.port >= 0 && c.port <= 65535, 'CONFIG', '잘못된 포트 번호');
   check(typeof c.host === 'string' && c.adapter?.type, 'CONFIG', 'host와 adapter.type이 필요합니다.');
   check(c.lan === undefined || (c.lan && typeof c.lan.enabled === 'boolean'), 'CONFIG', 'lan.enabled는 true 또는 false여야 합니다.');
+  check(c.background === undefined || (c.background && typeof c.background.enabled === 'boolean'), 'CONFIG', 'background.enabled는 true 또는 false여야 합니다.');
   check(Number.isInteger(c.maxQueue) && c.maxQueue > 0 && c.maxQueue <= 500 && Number.isInteger(c.queueTtlMs) && c.queueTtlMs >= 60000, 'CONFIG', '대기열 한도와 만료 시간을 확인하세요.');
   c.perUserLimit ??= 5; c.autoSkipUnplayable ??= true; c.handshakeTimeoutMs ??= 45000;
   check(Number.isInteger(c.perUserLimit) && c.perUserLimit >= 0 && c.perUserLimit <= 100, 'CONFIG', 'perUserLimit는 0~100 사이 정수여야 합니다.');
@@ -97,7 +98,7 @@ async function main() {
   const release = acquireLock(dataDirectory);
   process.once('exit', release);
   const store = new Store(dataDirectory);
-  const engine = new Engine({ store, youtube: new YouTube(config.youtubeApiKey, fetch, Date.now, { resolveTitles: !!config.resolveVideoTitles }), adapter, maxQueue: config.maxQueue, queueTtlMs: config.queueTtlMs, perUserLimit: config.perUserLimit, autoSkipUnplayable: config.autoSkipUnplayable, handshakeTimeoutMs: config.handshakeTimeoutMs });
+  const engine = new Engine({ store, youtube: new YouTube(config.youtubeApiKey, fetch, Date.now, { resolveTitles: !!config.resolveVideoTitles }), adapter, maxQueue: config.maxQueue, queueTtlMs: config.queueTtlMs, perUserLimit: config.perUserLimit, autoSkipUnplayable: config.autoSkipUnplayable, handshakeTimeoutMs: config.handshakeTimeoutMs, background: config.background });
   let worker;
   const server = createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, hardwareVerified: false }) });
   if (config.google?.enabled) {

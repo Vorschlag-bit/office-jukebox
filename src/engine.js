@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { check } from './util.js';
 import { playlistId } from './youtube.js';
+import { backgroundTrack } from './background.js';
 
 export class Engine {
-  constructor({ store, youtube, adapter, now = Date.now, maxQueue = 50, queueTtlMs = 14400000, perUserLimit = 0, autoSkipUnplayable = false, handshakeTimeoutMs = 45000 }) {
-    Object.assign(this, { store, youtube, adapter, now, maxQueue, queueTtlMs, perUserLimit, autoSkipUnplayable, handshakeTimeoutMs });
+  constructor({ store, youtube, adapter, now = Date.now, maxQueue = 50, queueTtlMs = 14400000, perUserLimit = 0, autoSkipUnplayable = false, handshakeTimeoutMs = 45000, background = { enabled: false } }) {
+    Object.assign(this, { store, youtube, adapter, now, maxQueue, queueTtlMs, perUserLimit, autoSkipUnplayable, handshakeTimeoutMs, background });
     this.chain = Promise.resolve();
     this.player = null;
     this.consecutiveFailures = 0;
@@ -46,9 +47,18 @@ export class Engine {
   }
   async dispatch() {
     const expired = this.expire();
-    if (this.state.current || this.state.paused || !this.state.queue.length) { if (expired) this.store.save(); return; }
     if (this.adapter.type === 'browser' && (!this.player || this.now() - this.player.lastSeen >= 15000)) { if (expired) this.store.save(); return; }
-    const track = this.state.queue.shift();
+    const current = this.state.current;
+    // Only our actually observed background playback can yield automatically.
+    // An external TV selection, recovery, error or pause never gets overwritten.
+    if (current?.source === 'background' && current.observedPlaying && ['playing', 'buffering'].includes(current.status) && current.desiredState !== 'paused' && !this.state.paused && this.state.queue.length) this.archive('background_yielded');
+    if (this.state.current || this.state.paused) { if (expired) this.store.save(); return; }
+    let track = this.state.queue.shift();
+    if (!track && this.background.enabled && !this.state.backgroundSuppressed && ['browser', 'lounge'].includes(this.adapter.type)) {
+      track = { ...backgroundTrack(this.now(), this.state.backgroundIndex || 0), id: randomUUID(), addedAt: this.now(), expiresAt: this.now() + 7 * 86400000 };
+      this.state.backgroundIndex = ((this.state.backgroundIndex || 0) + 1) % 1000000;
+    }
+    if (!track) { if (expired) this.store.save(); return; }
     this.state.current = { ...track, sessionId: randomUUID(), status: 'dispatching', dispatchedAt: this.now(), desiredState: 'playing', controlVersion: 0, observedPlaying: false };
     // Persist before the external side effect: restart requires explicit recovery, never blindly replays.
     this.store.save();
@@ -75,7 +85,8 @@ export class Engine {
         check(this.state.outbox.length < 500, 'NOTIFICATIONS_FULL', 'Chat 응답이 누적됐습니다. 운영자가 알림 상태를 확인해야 합니다.', 503);
         check(!this.perUserLimit || this.state.queue.filter(x => x.requestedBy === user).length < this.perUserLimit, 'USER_LIMIT', `한 사람은 대기곡을 ${this.perUserLimit}개까지 신청할 수 있습니다.`);
         this.state.queue.push({ ...song, id: randomUUID(), requestedBy: user, addedAt: this.now(), expiresAt: this.now() + this.queueTtlMs, requestSpace: space, requestThread: thread });
-        reply = `대기열에 담았어요: ${song.title}. 현재 곡이 끝나면 순서대로 재생돼요.`;
+        this.state.backgroundSuppressed = false;
+        reply = `대기열에 담았어요: ${song.title}. ${this.state.current?.source === 'background' ? '자동 배경음악보다 우선해서 재생돼요.' : '현재 곡이 끝나면 순서대로 재생돼요.'}`;
       };
       const listCommand = ['목록', '재생목록', 'playlist'].includes(verb.toLowerCase());
       const plainPlaylist = ['재생', '추가', 'play', 'add'].includes(verb.toLowerCase()) && playlistId(arg) && new URL(arg).pathname === '/playlist';
@@ -130,6 +141,7 @@ export class Engine {
           this.state.current.controlVersion = (this.state.current.controlVersion || 0) + 1;
         }
         this.state.paused = pause;
+        if (!pause) this.state.backgroundSuppressed = false;
         if (!pause) this.consecutiveFailures = 0;
         reply = pause ? '일시정지를 요청했습니다. 다음 곡 자동 시작도 보류합니다.' : '재생 계속을 요청했습니다.';
       } else if (['대기열', 'queue', '상태', 'status'].includes(verb.toLowerCase())) {
@@ -158,6 +170,7 @@ export class Engine {
           this.archive(stop ? 'stopped' : 'skipped');
           if (stop) this.state.queue = [];
           if (stop) this.state.paused = false;
+          if (stop) this.state.backgroundSuppressed = true;
           this.consecutiveFailures = 0;
           reply = stop ? (this.adapter.type === 'browser' ? '재생을 멈추고 대기열을 비웠어요.' : '정지 명령 전송 및 대기열 비움 완료. 기본 앱은 현장 정지를 확인하세요.') : '다음 곡으로 이동합니다.';
         }
@@ -204,6 +217,7 @@ export class Engine {
         this.consecutiveFailures = 0;
         current.observedPlaying = true;
         if (!current.notifiedPlaying) { this.notify(`재생 중: ${current.title}`); current.notifiedPlaying = true; }
+        if (current.source === 'background' && this.state.queue.length) await this.dispatch();
       }
       if (event === 'error') { current.error = errorCode ? `YOUTUBE_${Number(errorCode)}` : 'PLAYER_ERROR'; this.notify(`재생 오류: ${current.title} [${current.error}]`); }
     }
