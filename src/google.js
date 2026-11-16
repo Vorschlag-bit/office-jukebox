@@ -74,8 +74,11 @@ export class GoogleWorker {
       if (!e.status || e.status >= 500) throw e;
       await this.engine.serial(async () => {
         if (Object.hasOwn(this.engine.state.seen, eventId)) return;
+        check(this.engine.state.outbox.length < 500, 'NOTIFICATIONS_FULL', '응답 대기열이 가득 찼습니다.', 503);
         const id = createHash('sha256').update(eventId).digest('hex').slice(0, 32);
         Object.defineProperty(this.engine.state.seen, eventId, { value: { reply: e.message, at: this.now() }, writable: true, enumerable: true, configurable: true });
+        const ids = Object.keys(this.engine.state.seen);
+        for (const key of ids.slice(0, Math.max(0, ids.length - 5000))) delete this.engine.state.seen[key];
         this.engine.state.outbox.push({ id, space: command.space, user: command.user, thread: command.thread, text: e.message });
         this.engine.store.save();
       });

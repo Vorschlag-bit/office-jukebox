@@ -1,4 +1,4 @@
-import { openSync, writeSync, fsyncSync, closeSync, renameSync, existsSync, readFileSync, copyFileSync, mkdirSync, rmSync } from 'node:fs';
+import { openSync, writeSync, fsyncSync, closeSync, renameSync, existsSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { check, AppError } from './util.js';
@@ -13,7 +13,19 @@ export function atomicJson(path, data, { backup = false } = {}) {
     const bytes = Buffer.from(text); let offset = 0;
     while (offset < bytes.length) offset += writeSync(fd, bytes, offset);
     fsyncSync(fd); closeSync(fd); fd = undefined;
-    if (backup && existsSync(path)) copyFileSync(path, `${path}.bak`);
+    if (backup && existsSync(path)) {
+      // Atomic replacement also repairs a legacy backup with broad permissions.
+      const previous = readFileSync(path, 'utf8');
+      const backupTemp = `${temp}.bak`;
+      let backupFd;
+      try {
+        backupFd = openSync(backupTemp, 'wx', 0o600);
+        const bytes = Buffer.from(previous); let offset = 0;
+        while (offset < bytes.length) offset += writeSync(backupFd, bytes, offset);
+        fsyncSync(backupFd); closeSync(backupFd); backupFd = undefined;
+        renameSync(backupTemp, `${path}.bak`);
+      } finally { if (backupFd !== undefined) closeSync(backupFd); if (existsSync(backupTemp)) rmSync(backupTemp); }
+    }
     renameSync(temp, path);
   } finally {
     if (fd !== undefined) closeSync(fd);

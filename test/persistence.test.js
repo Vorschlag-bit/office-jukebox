@@ -34,3 +34,7 @@ test('legacy state is migrated with safe defaults and persisted without replay',
   const dir = directory(t); writeFileSync(join(dir, 'state.json'), JSON.stringify({ version: 1, queue: [], current: null, history: [], seen: {}, outbox: [] }));
   const store = new Store(dir); assert.deepEqual(store.state.deadLetters, []); assert.equal(store.state.paused, false); store.save(); assert.ok(existsSync(join(dir, 'state.json.bak')));
 });
+
+test('atomic backup replaces permissive legacy backup with owner-only permissions', async t => {
+  const {chmodSync,statSync}=await import('node:fs');const dir=directory(t),path=join(dir,'state.json');atomicJson(path,{revision:1});writeFileSync(path+'.bak','legacy');chmodSync(path+'.bak',0o644);atomicJson(path,{revision:2},{backup:true});assert.equal(JSON.parse(readFileSync(path+'.bak')).revision,1);if(process.platform!=='win32'){assert.equal(statSync(path+'.bak').mode&0o777,0o600);assert.equal(statSync(path).mode&0o777,0o600);}
+});

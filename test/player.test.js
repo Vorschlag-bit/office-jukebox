@@ -82,3 +82,7 @@ test('embedded player accepts a credential only from its same-origin parent', ()
   env.responses.push({status:200,data:env.state()});env.message(message);
   assert.match(env.document.body.className,/embedded-player/);assert.equal(env.element('login').hidden,true);assert.equal(env.requests[0].path,'/api/player/poll');
 });
+
+test('remote HTTP player never sends a key or claims a playback lease',()=>{
+  const env=playerEnvironment();env.context.window.location.protocol='http:';env.context.window.location.hostname='192.0.2.20';env.connect();assert.equal(env.requests.length,0);assert.match(env.element('notice').textContent,/HTTPS/);
+});

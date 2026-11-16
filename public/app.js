@@ -1,7 +1,10 @@
 'use strict';
-var token = sessionStorage.getItem('jukebox-admin') || '', timer, latest = null, capabilities = {}, playerSession = null, requestBusy = false, connectionFailed = false;
+var insecureRemote = window.location.protocol === 'http:' && ['localhost','127.0.0.1','[::1]','::1'].indexOf(window.location.hostname) < 0;
+if(insecureRemote) sessionStorage.removeItem('jukebox-admin');
+var token = insecureRemote ? '' : sessionStorage.getItem('jukebox-admin') || '', timer, latest = null, capabilities = {}, playerSession = null, requestBusy = false, connectionFailed = false;
 function el(id) { return document.getElementById(id); }
 function api(path, data) {
+  if(insecureRemote) { var blocked = new Error('관리자 연결은 HTTPS 주소를 사용해 주세요.'); blocked.code='TRANSPORT'; return Promise.reject(blocked); }
   return fetch(path, { method: data === undefined ? 'GET' : 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }).then(function(r) { return r.json().then(function(d) { if (!r.ok) { var e = new Error(d.message); e.code = d.error; throw e; } return d; }); });
 }
 var voiceSequence = 0;
@@ -17,7 +20,7 @@ function refresh() {
     el('current-art').src = artwork(s.current && s.current.videoId);
     var recovering = s.current && ['error','recovery_required'].indexOf(s.current.status) >= 0;
     el('playback-status').textContent = s.current ? names[s.current.status] || s.current.status : s.paused ? '잠시 쉬는 중' : '대기 중';
-    el('status').textContent = s.current ? (s.current.status === 'blocked' ? '하아? 재생 허락이 필요하대! 아래 영상의 재생 버튼을 눌러 줘.' : s.current.status === 'recovery_required' ? '연결이 끊겼던 곡이에요. 원하는 때 다시 시작하세요.' : s.current.status === 'error' ? '후와~앙… 영상이 막혔어. 다시 재생하거나 다음 곡을 골라 줘.' : '우라우라! 이 곡이 끝나면 다음 신청곡이 순서대로 출발해!') : s.paused ? '후운~ 잠깐 쉬는 거구나. 계속 재생을 누르면 다시 출발!' : '이~! 좋아하는 YouTube 링크를 데려와 줘. 우사기가 기다릴게!';
+    el('status').textContent = s.current && s.current.source === 'background' && s.current.status === 'playing' ? '푸루루~ 신청곡을 기다리며 계절 BGM을 틀고 있어! 신청하면 네 노래가 먼저야 ♡' : s.current ? (s.current.status === 'blocked' ? '하아? 재생 허락이 필요하대! 아래 영상의 재생 버튼을 눌러 줘.' : s.current.status === 'recovery_required' ? '연결이 끊겼던 곡이에요. 원하는 때 다시 시작하세요.' : s.current.status === 'error' ? '후와~앙… 영상이 막혔어. 다시 재생하거나 다음 곡을 골라 줘.' : '우라우라! 이 곡이 끝나면 다음 신청곡이 순서대로 출발해!') : s.paused ? '후운~ 잠깐 쉬는 거구나. 계속 재생을 누르면 다시 출발!' : '이~! 좋아하는 YouTube 링크를 데려와 줘. 우사기가 기다릴게!';
     el('recovery').hidden = !recovering; el('recovery-message').textContent = s.current && s.current.error ? '재생 오류: ' + s.current.error : '자동으로 다시 재생하지 않았어요.';
     var paused = s.paused || (s.current && s.current.status === 'paused');
     el('pause-toggle').textContent = paused ? '▶ 계속 재생' : 'Ⅱ 일시정지'; el('pause-toggle').setAttribute('data-command', paused ? '계속' : '일시정지'); el('pause-toggle').disabled = !!recovering || (!s.current && !s.queue.length && !s.paused);
@@ -29,17 +32,18 @@ function refresh() {
     el('empty').hidden = s.queue.length > 0; el('notifications').textContent = s.notifications.failed ? '전달하지 못한 Chat 알림이 있어요.' : '최대 5곡까지 신청할 수 있어요';
   });
 }
-function refreshFailed(e) { connectionFailed = true; connection(false); if(e.code === 'AUTH') { clearInterval(timer); el('login').hidden = false; el('dashboard').hidden = true; el('login-feedback').textContent = e.message; } }
+function refreshFailed(e) { connectionFailed = true; connection(false); if(e.code === 'AUTH' || e.code === 'TRANSPORT') { sessionStorage.removeItem('jukebox-admin'); token=''; el('token').value=''; clearInterval(timer); el('login').hidden = false; el('dashboard').hidden = true; el('login-feedback').textContent = e.message; } }
 function command(text) { return api('/api/command', { text: text }).then(function(r) { feedback(r.text); return refresh().then(function() { return r.text; }); }).catch(function(e) { feedback(e.message, true); return null; }); }
-function updateCapabilities(c) { capabilities = c; el('search').hidden = !c.searchEnabled; el('query').placeholder = c.searchEnabled ? '곡명 검색 또는 YouTube 링크 붙여 넣기' : 'YouTube 영상·재생목록 링크를 붙여 넣으세요'; el('search-hint').textContent = c.searchEnabled ? '신청하기는 첫 검색 결과를 추가해요. 검색으로 후보를 골라도 좋아요.' : '영상·재생목록에서 공유 → 링크 복사 후 붙여 넣으세요. 곡명 검색은 아직 연결하지 않았어요.'; }
+function updateCapabilities(c) { capabilities = c; el('shared-queue-link').hidden = !c.sharedQueueEnabled; el('search').hidden = !c.searchEnabled; el('query').placeholder = c.searchEnabled ? '곡명 검색 또는 YouTube 링크 붙여 넣기' : 'YouTube 영상·재생목록 링크를 붙여 넣으세요'; el('search-hint').textContent = c.searchEnabled ? '신청하기는 첫 검색 결과를 추가해요. 검색으로 후보를 골라도 좋아요.' : '영상·재생목록에서 공유 → 링크 복사 후 붙여 넣으세요. 곡명 검색은 아직 연결하지 않았어요.'; }
 function connect() {
   token = el('token').value.trim() || token; el('connect').disabled = true; el('login-feedback').textContent = '';
-  api('/api/capabilities').then(function(c) { updateCapabilities(c); return refresh(); }).then(function() { sessionStorage.setItem('jukebox-admin',token); clearInterval(timer); timer = setInterval(function() { refresh().catch(refreshFailed); },3000); if(capabilities.embeddedPlayer && sessionStorage.getItem('jukebox-inline-player') === 'yes' && !playerSession) el('start-player').onclick(); }).catch(function(e) { el('login-feedback').textContent = e.message; }).finally(function() { el('connect').disabled = false; });
+  api('/api/capabilities').then(function(c) { updateCapabilities(c); return refresh(); }).then(function() { sessionStorage.setItem('jukebox-admin',token); el('token').value=''; el('disconnect').hidden=false; clearInterval(timer); timer = setInterval(function() { refresh().catch(refreshFailed); },3000); if(capabilities.embeddedPlayer && sessionStorage.getItem('jukebox-inline-player') === 'yes' && !playerSession) el('start-player').onclick(); }).catch(function(e) { if(e.code==='AUTH'||e.code==='TRANSPORT') { sessionStorage.removeItem('jukebox-admin'); token=''; el('token').value=''; } el('login-feedback').textContent = e.message; }).finally(function() { el('connect').disabled = false; });
 }
 function renderChoices(text) {
   var choices = el('choices'); choices.textContent = ''; var lines = String(text).split('\n').filter(function(line) { return /^[1-5]\. /.test(line); });
   lines.forEach(function(line) { var button = document.createElement('button'); button.className = 'choice secondary'; button.textContent = line + ' ＋ 신청'; button.onclick = function() { button.disabled = true; command('선택 ' + line.charAt(0)).then(function(result) { if(result) choices.hidden = true; else button.disabled = false; }); }; choices.appendChild(button); }); choices.hidden = !lines.length;
 }
+el('disconnect').onclick = function() { clearInterval(timer); sessionStorage.removeItem('jukebox-admin'); sessionStorage.removeItem('jukebox-inline-player'); token=''; playerSession=null; latest=null; el('token').value=''; el('embedded-player').src='about:blank'; el('embedded-player').hidden=true; el('dashboard').hidden=true; el('login').hidden=false; el('disconnect').hidden=true; el('login-feedback').textContent='관리자 연결을 종료했어요.'; };
 el('connect').onclick = connect; el('token').onkeydown = function(e) { if(e.key === 'Enter') connect(); };
 el('help-toggle').onclick = function() { el('help').hidden = !el('help').hidden; if(!el('help').hidden) el('help').scrollIntoView({behavior:'smooth',block:'nearest'}); };
 el('search').onclick = function() { var query = el('query').value.trim(); if(!query) return el('query').focus(); el('search').disabled = true; command('검색 ' + query).then(function(text) { if(text) renderChoices(text); el('search').disabled = false; }); };

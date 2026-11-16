@@ -58,7 +58,7 @@ test('probe only accepts supported explicit TV targets; fingerprint requires TLS
 });
 test('actual CLI server starts with generated config and serves authenticated queue', async t => {
   const { configFile, env, run } = fixture(t); assert.equal(run('init').status, 0);
-  const config = JSON.parse(readFileSync(configFile, 'utf8')); config.port = 0; writeFileSync(configFile, JSON.stringify(config));
+  const config = JSON.parse(readFileSync(configFile, 'utf8')); config.port = 0; config.youtubeApiKey = 'fake-key-no-network'; config.search = { enabled: false }; writeFileSync(configFile, JSON.stringify(config));
   const child = spawn(process.execPath, [entry], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => { if (child.exitCode === null) child.kill(); });
   const base = await new Promise((resolve, reject) => {
@@ -67,6 +67,8 @@ test('actual CLI server starts with generated config and serves authenticated qu
     child.on('error', reject); child.on('exit', code => { if (code !== 0) { clearTimeout(timeout); reject(new Error(`CLI exited: ${code}`)); } });
   });
   assert.equal((await fetch(`${base}/health`)).status, 200);
+  const capabilities = await (await fetch(`${base}/api/capabilities`, { headers: { Authorization: `Bearer ${config.adminToken}` } })).json();
+  assert.equal(capabilities.searchEnabled, false, 'a stored API key alone must not enable search');
   const duplicate = run(); assert.equal(duplicate.status, 1); assert.match(duplicate.stderr, /ALREADY_RUNNING/);
   const response = await fetch(`${base}/api/command`, { method: 'POST', headers: { Authorization: `Bearer ${config.adminToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '추가 https://youtu.be/dQw4w9WgXcQ' }) });
   assert.equal(response.status, 200);
