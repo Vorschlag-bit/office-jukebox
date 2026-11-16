@@ -10,6 +10,12 @@ const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/player': ['player.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'], '/player.js': ['player.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/avatar.png': ['avatar.png', 'image/png'], '/usagi-wallpaper.jpg': ['usagi-wallpaper.jpg', 'image/jpeg'], '/usagi-teatime.jpg': ['usagi-teatime.jpg', 'image/jpeg'], '/usagi-cheer.jpg': ['usagi-cheer.jpg', 'image/jpeg'], '/usagi-snack.jpg': ['usagi-snack.jpg', 'image/jpeg'] };
 assets['/queue'] = ['queue.html', 'text/html; charset=utf-8'];
 assets['/queue.js'] = ['queue.js', 'text/javascript; charset=utf-8'];
+assets['/theme.js'] = ['theme.js', 'text/javascript; charset=utf-8'];
+assets['/themes.css'] = ['themes.css', 'text/css; charset=utf-8'];
+for (const character of ['chiikawa', 'hachiware']) {
+  assets[`/${character}-avatar.png`] = [`${character}-avatar.png`, 'image/png'];
+  assets[`/${character}-wallpaper.jpg`] = [`${character}-wallpaper.jpg`, 'image/jpeg'];
+}
 async function readJson(req) {
   const chunks = []; let size = 0;
   for await (const chunk of req) { size += chunk.length; check(size <= 8192, 'BODY_SIZE', '요청 크기가 너무 큽니다.', 413); chunks.push(chunk); }
@@ -34,7 +40,7 @@ export function createServer({ engine, config, diagnostics = () => ({}), tls }) 
     const send = (status, value) => { if (!res.headersSent) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); } };
     try {
       // Binding to LAN never trusts forwarded headers or arbitrary DNS hosts.
-      check(validHost(req), 'HOST', '이 컴퓨터의 IP 주소와 포트로 접속해 주세요.', 403);
+      check(validHost(req, config.lan?.enabled ? config.lan.hostnames : []), 'HOST', '이 컴퓨터의 IP 또는 등록된 .local 이름과 포트로 접속해 주세요.', 403);
       if (config.lan?.enabled) {
         check(privatePeer(req.socket.remoteAddress), 'LAN_ONLY', '내부 네트워크에서만 접근할 수 있습니다.', 403);
       }
@@ -46,7 +52,8 @@ export function createServer({ engine, config, diagnostics = () => ({}), tls }) 
       check(bucket.count <= 180, 'RATE_LIMIT', '요청이 너무 많습니다.', 429);
       if (buckets.size > 1000) buckets.delete(buckets.keys().next().value);
       const publicRead = req.method === 'GET' && (['/queue','/queue.js','/health','/api/public/queue'].includes(url.pathname) || (assets[url.pathname] && !['/','/player'].includes(url.pathname)));
-      if (!publicRead && !secureControlTransport(req)) {
+      const namedHttp = !req.socket.encrypted && new URL('http://' + req.headers.host).hostname.endsWith('.local');
+      if (!publicRead && (!secureControlTransport(req) || namedHttp)) {
         if (req.method === 'GET' && ['/', '/player'].includes(url.pathname) && config.tls?.enabled) {
           const host = req.socket.localAddress.replace(/^::ffff:/, '');
           res.writeHead(302, { Location: `https://${host.includes(':') ? '['+host+']' : host}:${config.tls.port}${url.pathname}` }); res.end(); return;
@@ -63,7 +70,8 @@ export function createServer({ engine, config, diagnostics = () => ({}), tls }) 
       if (req.method === 'GET' && url.pathname === '/api/public/queue') {
         const state = engine.snapshot();
         const song = x => x ? { title: x.title, videoId: x.videoId, status: x.status } : null;
-        return send(200, { current: song(state.current), queue: state.queue.map(song), paused: state.paused, adminTlsPort: config.tls?.enabled ? config.tls.port : null });
+        const hostname = config.lan.hostnames?.[0];
+        return send(200, { current: song(state.current), queue: state.queue.map(song), paused: state.paused, adminTlsPort: config.tls?.enabled ? config.tls.port : null, shareUrl: hostname ? `http://${hostname.toLowerCase()}:${config.port}/queue` : null });
       }
       const player = url.pathname.startsWith('/api/player/');
       const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];

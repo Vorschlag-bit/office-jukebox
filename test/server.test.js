@@ -119,3 +119,13 @@ test('LAN mode rejects forged DNS hosts and applies request limits before anonym
   for(let i=0;i<180;i++)assert.equal((await fetch(base+'/api/public/queue')).status,200);
   assert.equal((await fetch(base+'/api/public/queue')).status,429);
 });
+
+test('only explicitly configured local names reach shared pages, without weakening role or Origin checks', async t=>{
+  const {base,engine}=await start(t,{port:8787,lan:{enabled:true,hostnames:['jukebox-test.local']}}),port=new URL(base).port;
+  const request=(host,path='/api/public/queue',method='GET',origin)=>new Promise((resolve,reject)=>{const req=http.request(base+path,{method,headers:{Host:host+':'+port,...(origin?{Origin:origin}:{}),'Content-Type':'application/json',Authorization:'Bearer '+'a'.repeat(40)}},res=>{let data='';res.on('data',d=>data+=d);res.on('end',()=>resolve({status:res.statusCode,data}));});req.on('error',reject);req.end(method==='POST'?JSON.stringify({text:'대기열'}):undefined);});
+  const before=JSON.stringify(engine.state);const shared=await request('JUKEBOX-TEST.local');assert.equal(shared.status,200);assert.equal(JSON.parse(shared.data).shareUrl,'http://jukebox-test.local:8787/queue');
+  for(const name of ['evil.local','jukebox-test.local.evil.example'])assert.equal((await request(name)).status,403);
+  assert.equal((await request('jukebox-test.local','/api/command','POST','http://evil.local:'+port)).status,403);assert.equal(JSON.stringify(engine.state),before);
+  for(const path of ['/theme.js','/themes.css','/chiikawa-avatar.png','/hachiware-wallpaper.jpg']){const r=await request('jukebox-test.local',path);assert.equal(r.status,200);}
+  assert.equal((await request('evil.local','/theme.js')).status,403);
+});

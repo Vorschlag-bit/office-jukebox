@@ -89,3 +89,5 @@ test('CLI fallback mode remembers previous adapter without changing OS settings'
   assert.equal(run('use-browser').status, 0); assert.equal(loadConfig(configFile).adapter.type, 'browser');
   assert.equal(run('use-previous').status, 0); assert.equal(loadConfig(configFile).adapter.type, 'samsung');
 });
+
+test('configuration accepts bounded local names and rejects wildcard, URL or public domain names',t=>{const{configFile,run}=fixture(t);assert.equal(run('init').status,0);const c=loadConfig(configFile);c.lan={enabled:true,hostnames:['jukebox-test.local']};writeFileSync(configFile,JSON.stringify(c));assert.equal(loadConfig(configFile).lan.hostnames[0],'jukebox-test.local');for(const name of ['*.local','https://box.local','box.local:8787','evil.example','-box.local']){c.lan.hostnames=[name];writeFileSync(configFile,JSON.stringify(c));assert.throws(()=>loadConfig(configFile),{code:'CONFIG'});}});

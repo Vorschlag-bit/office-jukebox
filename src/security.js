@@ -2,10 +2,11 @@ import { check } from './util.js';
 export const normalizedAddress = address => String(address || '').replace(/^::ffff:/, '');
 export function isLoopback(address) { const a=normalizedAddress(address); return a==='::1'||/^127\./.test(a); }
 export function privatePeer(address) { const a=normalizedAddress(address);return isLoopback(a)||/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a); }
-export function validHost(req) {
+export const validLocalHostname = name => typeof name === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local$/i.test(name);
+export function validHost(req, hostnames = []) {
   try {
     const url=new URL('http://'+req.headers.host),local=normalizedAddress(req.socket.localAddress),name=url.hostname.replace(/^\[|\]$/g,'');
-    return !url.username&&!url.password&&url.pathname==='/'&&!url.search&&!url.hash&&Number(url.port||(req.socket.encrypted?443:80))===req.socket.localPort&&(name===local||(isLoopback(req.socket.remoteAddress)&&isLoopback(local)&&['localhost','127.0.0.1','::1'].includes(name)));
+    return !url.username&&!url.password&&url.pathname==='/'&&!url.search&&!url.hash&&Number(url.port||(req.socket.encrypted?443:80))===req.socket.localPort&&(name===local||(isLoopback(req.socket.remoteAddress)&&isLoopback(local)&&['localhost','127.0.0.1','::1'].includes(name))||hostnames.some(host => validLocalHostname(host) && host.toLowerCase() === name.toLowerCase()));
   } catch { return false; }
 }
 export function secureControlTransport(req) { return req.socket.encrypted===true||isLoopback(req.socket.remoteAddress); }

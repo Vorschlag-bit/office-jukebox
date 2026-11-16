@@ -13,7 +13,7 @@ import { probe } from './probe.js';
 import { acquireLock, atomicJson } from './persistence.js';
 import { pairTvCode } from './lounge.js';
 import { createInterface } from 'node:readline/promises';
-import { assertRuntimeVersion } from './security.js';
+import { assertRuntimeVersion, validLocalHostname } from './security.js';
 
 
 export function loadConfig(path) {
@@ -23,6 +23,7 @@ export function loadConfig(path) {
   check(Number.isInteger(c.port) && c.port >= 0 && c.port <= 65535, 'CONFIG', '잘못된 포트 번호');
   check(typeof c.host === 'string' && c.adapter?.type, 'CONFIG', 'host와 adapter.type이 필요합니다.');
   check(c.lan === undefined || (c.lan && typeof c.lan.enabled === 'boolean'), 'CONFIG', 'lan.enabled는 true 또는 false여야 합니다.');
+  check(c.lan?.hostnames === undefined || (Array.isArray(c.lan.hostnames) && c.lan.hostnames.length <= 5 && c.lan.hostnames.every(validLocalHostname)), 'CONFIG', 'lan.hostnames에는 실제 컴퓨터의 .local 이름을 최대 5개까지 지정하세요.');
   check(c.background === undefined || (c.background && typeof c.background.enabled === 'boolean'), 'CONFIG', 'background.enabled는 true 또는 false여야 합니다.');
   check(c.tls === undefined || (c.tls && typeof c.tls.enabled === 'boolean'), 'CONFIG', 'tls.enabled는 true 또는 false여야 합니다.');
   check(c.search === undefined || (c.search && typeof c.search.enabled === 'boolean'), 'CONFIG', 'search.enabled는 true 또는 false여야 합니다.');
