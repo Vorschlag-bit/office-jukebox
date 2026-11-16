@@ -43,7 +43,8 @@ function jbHandleMessage(e) {
       if (jbSpaces(p).indexOf(space) < 0) return { text: '허용되지 않은 스페이스입니다. 내정보로 ID를 확인하고 ALLOWED_SPACES를 설정하세요.' };
       if (text === '익명메뉴') return jbPanel(p, space, '', '푸루야! 선곡자는 다른 참여자에게 표시하지 않아. 신청은 아래 비공개 신청창에서!');
       if (['메뉴', 'menu', '도움말', '명령어', 'help'].indexOf(text) >= 0) return jbPanel(p, space, u.name, '링크를 붙여 넣고 신청 버튼을 누르세요. 재생 제어와 결과 조회도 버튼으로 할 수 있어요.');
-      if (['상태', 'status', '대기열', 'queue'].indexOf(text) >= 0 && p.getProperty('VIEW')) return jbPanel(p, space, u.name, '현재 음악방 상태입니다.');
+      if (['플리', '전체플리', '전체 플리', '대기열', 'queue'].indexOf(text) >= 0 && (p.getProperty('VIEW') || /플리/.test(text))) return jbQueuePanel(p, 0);
+      if (['상태', 'status'].indexOf(text) >= 0 && p.getProperty('VIEW')) return jbPanel(p, space, u.name, '현재 음악방 상태입니다.');
       if (text === '결과') {
         var r = jbRead(p, 'r_' + jbHash(space + '/' + u.name), null);
         return jbPanel(p, space, u.name, r && Date.now() - r.at < 86400000 ? jbSafe(r.text) + '\n[노트북 처리 결과: ' + new Date(r.at).toISOString() + ']' : '아직 처리 결과가 없어요. 신청 후 잠시 기다렸다 결과 확인을 눌러 주세요.');
@@ -70,9 +71,9 @@ function doPost(e) {
   var result;
   try {
     var body = e && e.postData && e.postData.contents;
-    if (typeof body !== 'string' || body.length > 16000) throw Error('BODY');
+    if (typeof body !== 'string' || body.length > 240000) throw Error('BODY');
     var r = JSON.parse(body), now = Date.now();
-    if (r.v !== 1 || !Number.isFinite(r.ts) || Math.abs(now-r.ts) > 60000 || !/^[a-zA-Z0-9_-]{16,80}$/.test(r.nonce || '') || ['check','pull','ack','result'].indexOf(r.op) < 0 || typeof r.payload !== 'string' || r.payload.length > 10000 || !/^[a-f0-9]{64}$/.test(r.signature || '')) throw Error('AUTH');
+    if (r.v !== 1 || !Number.isFinite(r.ts) || Math.abs(now-r.ts) > 60000 || !/^[a-zA-Z0-9_-]{16,80}$/.test(r.nonce || '') || ['check','pull','ack','result'].indexOf(r.op) < 0 || typeof r.payload !== 'string' || r.payload.length > 120000 || !/^[a-f0-9]{64}$/.test(r.signature || '')) throw Error('AUTH');
     result = jbLocked(function(p) {
       var secret = p.getProperty('SHARED_SECRET'); if (!secret || secret.length < 32) throw Error('AUTH');
       var expected = Utilities.computeHmacSha256Signature('1\n'+r.ts+'\n'+r.nonce+'\n'+r.op+'\n'+r.payload, secret, Utilities.Charset.UTF_8).map(function(b) { return ('0'+((b+256)%256).toString(16)).slice(-2); }).join('');
@@ -95,12 +96,13 @@ function doPost(e) {
       var ids = jbIndex(p,'QUEUE','q_',JB_TTL,now);
       if (r.op === 'pull') {
         jbWrite(p,'WORKER',{ id:d.clientId,until:now+45000 });
-        if (d.view && Array.isArray(d.view.queue) && d.view.queue.length <= 8 && Number.isInteger(d.view.queueCount) && d.view.queueCount >= 0 && d.view.queueCount <= 500 && typeof d.view.paused === 'boolean' && typeof d.view.searchEnabled === 'boolean' && d.view.queue.every(function(x) { return x && typeof x.title === 'string' && x.title.length <= 180; }) && (!d.view.current || (typeof d.view.current.title === 'string' && d.view.current.title.length <= 180 && typeof d.view.current.status === 'string' && d.view.current.status.length <= 30))) { jbWrite(p, 'VIEW', { at: now, current: d.view.current, queue: d.view.queue, queueCount: d.view.queueCount, paused: d.view.paused, searchEnabled: d.view.searchEnabled, playerOnline: !!d.view.playerOnline }); }
-        if (!ids.length) return { ok:true,command:null };
+        var queueRevision = jbSaveQueueView(p, d.queueView, d.view);
+        if (d.view && Array.isArray(d.view.queue) && d.view.queue.length <= 8 && Number.isInteger(d.view.queueCount) && d.view.queueCount >= 0 && d.view.queueCount <= 500 && typeof d.view.paused === 'boolean' && typeof d.view.searchEnabled === 'boolean' && d.view.queue.every(function(x) { return x && typeof x.title === 'string' && x.title.length <= 180; }) && (!d.view.current || (typeof d.view.current.title === 'string' && d.view.current.title.length <= 180 && typeof d.view.current.status === 'string' && d.view.current.status.length <= 30))) { jbWrite(p, 'VIEW', { at: now, current: d.view.current, queue: d.view.queue, queueCount: d.view.queueCount, paused: d.view.paused, searchEnabled: d.view.searchEnabled, playerOnline: !!d.view.playerOnline, queueRevision: queueRevision }); }
+        if (!ids.length) return { ok:true,command:null,queueRevision:queueRevision };
         var c = jbRead(p,'q_'+ids[0],null);
-        if (c.until > now) return { ok:true,command:null };
+        if (c.until > now) return { ok:true,command:null,queueRevision:queueRevision };
         c.lease = Utilities.getUuid(); c.until = now+30000; jbWrite(p,'q_'+c.id,c);
-        return { ok:true,command:c };
+        return { ok:true,command:c,queueRevision:queueRevision };
       }
       var c = jbRead(p,'q_'+d.id,null);
       if (c && (c.lease !== d.lease || c.until < now)) throw Error('LEASE');
@@ -112,6 +114,37 @@ function doPost(e) {
 }
 
 function jbHtml(value) { return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>'); }
+// Ten bounded rows per property stay below Apps Script's per-value byte limit.
+function jbSaveQueueView(p, incoming, view) {
+  var old = jbRead(p, 'QUEUE_VIEW', null);
+  if (incoming !== undefined) {
+    if (!incoming || !/^[a-f0-9]{64}$/.test(incoming.revision || '') || !Array.isArray(incoming.songs) || incoming.songs.length > 500 || !view || incoming.songs.length !== view.queueCount || !incoming.songs.every(function(x) { return x && /^[a-f0-9-]{36}$/.test(x.id || '') && typeof x.title === 'string' && Array.from(x.title).length <= 80; })) throw Error('QUEUE_VIEW');
+    if (!old || old.revision !== incoming.revision) {
+      var pages = Math.ceil(incoming.songs.length / 10);
+      for (var i = 0; i < pages; i++) jbWrite(p, 'QV_' + i, incoming.songs.slice(i * 10, i * 10 + 10).map(function(x) { return { id: x.id, title: x.title }; }));
+      for (var i = pages; old && i < old.pages; i++) p.deleteProperty('QV_' + i);
+      old = { revision: incoming.revision, count: incoming.songs.length, pages: pages };
+      jbWrite(p, 'QUEUE_VIEW', old);
+    }
+  }
+  return old && view && old.count === view.queueCount ? old.revision : null;
+}
+function jbQueuePanel(p, page, revision) {
+  var view = jbRead(p, 'VIEW', null), manifest = jbRead(p, 'QUEUE_VIEW', null);
+  if (!view || !manifest || view.queueRevision !== manifest.revision) return { text: '후운~ 전체 플리를 받아오는 중이야. 잠시 후 전체 플리를 다시 눌러 줘.' };
+  var changed = revision && revision !== manifest.revision;
+  page = changed ? 0 : Math.max(0, Math.min(page, Math.max(0, manifest.pages - 1)));
+  var rows = jbRead(p, 'QV_' + page, []), stale = Date.now() - view.at >= 30000;
+  var widgets = [{ textParagraph: { text: jbHtml((stale ? '⚠ 연결이 끊겨 마지막으로 받은 목록이야.\n' : '') + (changed ? '플리가 바뀌어서 첫 페이지부터 보여 줄게!\n' : '') + (view.current ? '지금: ' + view.current.title : '지금 재생 중인 곡 없음') + '\n대기 ' + manifest.count + '곡 · ' + (page + 1) + '/' + Math.max(1, manifest.pages) + ' 페이지') } }];
+  if (!manifest.count) widgets.push({ textParagraph: { text: '쥬르리… 대기곡이 없어. 좋아하는 노래 데려와 줘 ♡' } });
+  else rows.forEach(function(song, i) { widgets.push({ textParagraph: { text: jbHtml((page * 10 + i + 1) + '. ' + song.title) } }); });
+  var buttons = [];
+  if (page > 0) buttons.push(jbButton('‹ 이전 10곡', 'queue-page:' + (page - 1) + ':' + manifest.revision));
+  if (page + 1 < manifest.pages) buttons.push(jbButton('다음 10곡 ›', 'queue-page:' + (page + 1) + ':' + manifest.revision));
+  buttons.push(jbButton('↻ 최신 플리', 'queue-page:0'), jbButton('음악방 메뉴', '메뉴'));
+  widgets.push({ buttonList: { buttons: buttons } });
+  return { text: '이~! 우리 음악방 전체 플리야 ♫', cardsV2: [{ cardId: 'jukebox-queue', card: { header: { title: '우사기 · 전체 플리' }, sections: [{ widgets: widgets }] } }] };
+}
 function jbButton(label, command, required) {
   var action = { function: 'onCardClick', parameters: [{ key: 'command', value: command }] };
   if (required) action.requiredWidgets = [required];
@@ -128,7 +161,7 @@ function jbPanel(p, space, user, message) {
     if (view.queueCount > view.queue.length) summary += '\n외 ' + (view.queueCount-view.queue.length) + '곡';
     widgets.push({ textParagraph: { text: jbHtml(summary) } });
   }
-  widgets.push({ buttonList: { buttons: [jbButton('↻ 상태 새로고침', '메뉴'), jbButton('내 신청 결과 확인', '결과')] } });
+  widgets.push({ buttonList: { buttons: [jbButton('♫ 전체 플리', 'queue-page:0'), jbButton('↻ 상태 새로고침', '메뉴'), jbButton('내 신청 결과 확인', '결과')] } });
   var sections = [{ widgets: widgets }, { header: '선곡자는 숨기고, 음악은 함께!', widgets: [
     { textParagraph: { text: '신청 링크는 채팅창에 직접 보내지 말고 아래 비공개 신청창에 넣어 줘. 창과 결과는 본인만 볼 수 있어. 공용 화면에는 곡만 표시해!<br><br>Google과 봇 운영자는 내부 식별 정보를 처리할 수 있어. 완전한 추적 불가능 익명은 아니야.' } },
     { buttonList: { buttons: [jbDialogButton('비공개 신청창 열기', 'open-anonymous'), jbDialogButton('내 신청 결과 · 비공개', 'open-private-result')] } }
@@ -158,6 +191,10 @@ function jbHandleClick(e) {
     if (!/^spaces\/[A-Za-z0-9_-]+$/.test(space || '') || !/^users\/[A-Za-z0-9_-]+$/.test(user.name || '') || user.type === 'BOT') return { text: '지원하지 않는 이벤트입니다.' };
     if (jbSpaces(jbProps()).indexOf(space) < 0) return { text: '허용되지 않은 스페이스입니다.' };
     if (e.dialogEventType || /^(open-anonymous|open-private-result|anonymous-)/.test(command || '')) return jbAnonymousDialog(e, command, field, space, user);
+    if (/^queue-page:[0-9]{1,2}(?::[a-f0-9]{64})?$/.test(command || '')) {
+      var pageParts = command.split(':');
+      return jbLocked(function(p) { return jbQueuePanel(p, Number(pageParts[1]), pageParts[2]); });
+    }
     if (command === 'confirm-stop') return { actionResponse: { type: 'UPDATE_MESSAGE' }, text: '재생을 멈추고 대기열을 모두 비울까요?', cardsV2: [{ cardId: 'confirm-stop', card: { sections: [{ widgets: [{ buttonList: { buttons: [jbButton('돌아가기', '메뉴'), jbButton('정지하고 모두 비우기', '정지')] } }] }] } }] };
     if (command === 'submit-add' || command === 'submit-search' || command === 'submit-playlist') { var song = field('song'); if (!song || song.length > 300) return { text: 'YouTube 영상 링크 또는 곡명을 입력해 주세요. 최대 300자입니다.' }; command = (command === 'submit-add' ? '추가 ' : command === 'submit-playlist' ? '목록 ' : '검색 ') + song; }
     else if (command === 'submit-cancel') { var number = field('cancelNumber'); if (!/^[1-9][0-9]*$/.test(number)) return { text: '취소할 대기번호를 숫자로 입력해 주세요.' }; command = '취소 ' + number; }

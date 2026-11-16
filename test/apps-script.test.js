@@ -264,3 +264,29 @@ test('public launch card contains no private results; replies and result dialogs
   const privateReply=r.context.onMessage(r.event('결과'));assert.equal(privateReply.privateMessageViewer.name,'users/test');
   const privateCard=r.context.onCardClick(dialogEvent(r,'메뉴',{dialogEventType:undefined}));assert.equal(privateCard.actionResponse.type,'NEW_MESSAGE');assert.equal(privateCard.privateMessageViewer.name,'users/test');
 });
+
+test('full queue pages preserve every ordered song, hide identities, bound properties and refresh changed pages', async () => {
+  const r=runtime(), e=engine(r), w=worker(e,r);
+  e.state.queue=Array.from({length:500},(_,i)=>({id:randomUUID(),title:`${i} <tag> `+'🐰'.repeat(90),videoId:'dQw4w9WgXcQ',requestedBy:'users/private',requestSpace:'spaces/private'}));
+  await w.cycle();
+  let all=[];
+  for(let page=0;page<50;page++) {
+    const reply=r.context.onCardClick({...r.event(''),common:{parameters:{command:`queue-page:${page}`}}});
+    assert.equal(reply.privateMessageViewer.name,'users/test');
+    const json=JSON.stringify(reply);assert.doesNotMatch(json,/users\/private|spaces\/private|<tag>/);assert.match(json,/&lt;tag&gt;/);
+    all.push(...reply.cardsV2[0].card.sections[0].widgets.slice(1,-1).map(x=>x.textParagraph.text));
+  }
+  assert.equal(all.length,500);all.forEach((row,i)=>assert.ok(row.startsWith(`${i+1}. ${i} `)));
+  const oldRevision=JSON.parse(r.props.get('QUEUE_VIEW')).revision;
+  assert.equal(JSON.parse(r.props.get('VIEW')).queue.length,8);
+  e.state.queue=e.state.queue.slice(0,3);await w.cycle();assert.equal(r.props.has('QV_49'),false);
+  const refreshed=r.context.onCardClick({...r.event(''),common:{parameters:{command:`queue-page:49:${oldRevision}`}}});assert.match(JSON.stringify(refreshed),/첫 페이지/);
+  r.advance(31000);assert.match(JSON.stringify(r.context.onMessage(r.event('플리'))),/마지막으로/);
+  const denied=r.context.onCardClick({...r.event('',undefined,'users/test','spaces/other'),common:{parameters:{command:'queue-page:0'}}});assert.match(denied.text,/허용되지/);
+  e.state.queue=[];await w.cycle();assert.match(JSON.stringify(r.context.onMessage(r.event('전체플리'))),/대기곡이 없어/);
+});
+test('queue revision acknowledgement resends after bridge reset and malformed full views cannot replace cached list', async () => {
+  const r=runtime(),e=engine(r),w=worker(e,r);await w.cycle();const revision=JSON.parse(r.props.get('QUEUE_VIEW')).revision;
+  r.props.delete('QUEUE_VIEW');await w.cycle();assert.equal(w.queueRevision,null);await w.cycle();assert.equal(JSON.parse(r.props.get('QUEUE_VIEW')).revision,revision);
+  const bad=r.call('pull',{clientId:w.clientId,view:{queueCount:1},queueView:{revision:'a'.repeat(64),songs:[{id:randomUUID(),title:'x'.repeat(81)}]}});assert.equal(bad.ok,false);assert.equal(JSON.parse(r.props.get('QUEUE_VIEW')).revision,revision);
+});
