@@ -37,7 +37,7 @@ export function createServer({ engine, config, diagnostics = () => ({}) }) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     const embeddedPlayer = req.url?.split('?')[0] === '/player';
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com; frame-src 'self' https://www.youtube.com; style-src 'self'; img-src 'self' https://i.ytimg.com; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors " + (embeddedPlayer ? "'self'" : "'none'"));
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://www.youtube.com https://s.ytimg.com; frame-src 'self' https://www.youtube.com; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://i.ytimg.com; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors " + (embeddedPlayer ? "'self'" : "'none'"));
     const send = (status, value) => { if (!res.headersSent) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); } };
     try {
       // Binding to LAN never trusts forwarded headers or arbitrary DNS hosts.
