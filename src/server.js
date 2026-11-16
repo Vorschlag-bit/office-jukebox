@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { createPublicRequests, publicQueueUrl } from './public-requests.js';
 import { privatePeer, validHost, secureControlTransport } from './security.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,7 @@ const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
 const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/player': ['player.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/voice.js': ['voice.js', 'text/javascript; charset=utf-8'], '/player.js': ['player.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/avatar.png': ['avatar.png', 'image/png'], '/usagi-wallpaper.jpg': ['usagi-wallpaper.jpg', 'image/jpeg'], '/usagi-teatime.jpg': ['usagi-teatime.jpg', 'image/jpeg'], '/usagi-cheer.jpg': ['usagi-cheer.jpg', 'image/jpeg'], '/usagi-snack.jpg': ['usagi-snack.jpg', 'image/jpeg'] };
 assets['/queue'] = ['queue.html', 'text/html; charset=utf-8'];
 assets['/queue.js'] = ['queue.js', 'text/javascript; charset=utf-8'];
+assets['/requests.js'] = ['requests.js', 'text/javascript; charset=utf-8'];
 assets['/theme.js'] = ['theme.js', 'text/javascript; charset=utf-8'];
 assets['/themes.css'] = ['themes.css', 'text/css; charset=utf-8'];
 for (const character of ['chiikawa', 'hachiware']) {
@@ -26,6 +28,7 @@ async function readJson(req) {
   return body;
 }
 export function createServer({ engine, config, diagnostics = () => ({}), tls }) {
+  const requests = createPublicRequests({engine,config});
   const buckets = new Map();
   const playbackSessions = new Map();
   const handler = async (req, res) => {
@@ -52,8 +55,9 @@ export function createServer({ engine, config, diagnostics = () => ({}), tls }) 
       check(bucket.count <= 180, 'RATE_LIMIT', '요청이 너무 많습니다.', 429);
       if (buckets.size > 1000) buckets.delete(buckets.keys().next().value);
       const publicRead = req.method === 'GET' && (['/queue','/queue.js','/health','/api/public/queue'].includes(url.pathname) || (assets[url.pathname] && !['/','/player'].includes(url.pathname)));
+      const publicRequestRoute=requests.enabled() && (req.method==='GET'&&url.pathname==='/api/public/session'||req.method==='POST'&&url.pathname==='/api/public/request');
       const namedHttp = !req.socket.encrypted && new URL('http://' + req.headers.host).hostname.endsWith('.local');
-      if (!publicRead && (!secureControlTransport(req) || namedHttp)) {
+      if (!publicRead && !publicRequestRoute && (!secureControlTransport(req) || namedHttp)) {
         if (req.method === 'GET' && ['/', '/player'].includes(url.pathname) && config.tls?.enabled) {
           const host = req.socket.localAddress.replace(/^::ffff:/, '');
           res.writeHead(302, { Location: `https://${host.includes(':') ? '['+host+']' : host}:${config.tls.port}${url.pathname}` }); res.end(); return;
@@ -66,12 +70,16 @@ export function createServer({ engine, config, diagnostics = () => ({}), tls }) 
       }
       if (req.method === 'GET' && url.pathname === '/health') return send(200, { ok: true });
       check(url.pathname.startsWith('/api/'), 'NOT_FOUND', '없는 경로입니다.', 404);
+      if (req.method==='GET' && url.pathname==='/api/public/session') return send(200,requests.session(req,res));
+      if (req.method==='POST' && url.pathname==='/api/public/request') {
+        check(req.headers['content-type']?.startsWith('application/json'),'CONTENT_TYPE','application/json을 사용하세요.',415);
+        return send(200,await requests.request(req,await readJson(req)));
+      }
       if (url.pathname === '/api/public/queue') check(config.lan?.enabled === true, 'NOT_FOUND', '공유 플리가 꺼져 있습니다.', 404);
       if (req.method === 'GET' && url.pathname === '/api/public/queue') {
         const state = engine.snapshot();
         const song = x => x ? { title: x.title, videoId: x.videoId, status: x.status } : null;
-        const hostname = config.lan.hostnames?.[0];
-        return send(200, { current: song(state.current), queue: state.queue.map(song), paused: state.paused, adminTlsPort: config.tls?.enabled ? config.tls.port : null, shareUrl: hostname ? `http://${hostname.toLowerCase()}:${config.port}/queue` : null });
+        return send(200, { current: song(state.current), queue: state.queue.map(song), paused: state.paused, adminTlsPort: config.tls?.enabled ? config.tls.port : null, shareUrl: publicQueueUrl(config), requestsEnabled:requests.enabled(), searchEnabled:requests.enabled()&&!!engine.youtube.key });
       }
       const player = url.pathname.startsWith('/api/player/');
       const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];

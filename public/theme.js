@@ -17,7 +17,7 @@
     var kind=error || /오류|실패|불가|만료|허용되지|한도/.test(raw) ? "error" : /대기열에 담|곡을 대기열/.test(raw) ? "added" : /신청 취소/.test(raw) ? "cancel" : /일시정지.*요청/.test(raw) ? "paused" : /다음 곡.*요청/.test(raw) ? "next" : "result";
     var lines=reactions[active][kind],hash=0;seed=String(seed||raw);for(var i=0;i<seed.length;i++)hash=(hash*31+seed.charCodeAt(i))>>>0;return lines[hash%lines.length]+"\n"+raw;
   }
-  function feedback(raw,seed,error) { lastFeedback={raw:raw,seed:seed,error:error};var node=document.getElementById("feedback");if(node)node.textContent=say(raw,seed,error); }
+  function feedback(raw,seed,error,targetId) { lastFeedback={raw:raw,seed:seed,error:error,targetId:targetId||"feedback"};var node=document.getElementById(lastFeedback.targetId);if(node)node.textContent=say(raw,seed,error); }
   function valid(value) { return Object.prototype.hasOwnProperty.call(themes, value); }
   function apply(value) {
     active = valid(value) ? value : 'usagi';
@@ -31,7 +31,7 @@
     document.title=theme.name+' · '+(document.getElementById('shared-title')?'전체 플리':'음악방');
     ['shared-art','current-art'].forEach(function(id){var current=document.getElementById(id);if(current && current.getAttribute('data-idle') === 'true')current.src=theme.art;});
     document.querySelectorAll('[data-tone-key]').forEach(function(node){node.textContent=textFor(node.getAttribute('data-tone-key'),node.textContent);});
-    if(lastFeedback)feedback(lastFeedback.raw,lastFeedback.seed,lastFeedback.error);
+    if(lastFeedback)feedback(lastFeedback.raw,lastFeedback.seed,lastFeedback.error,lastFeedback.targetId);
     var note=document.getElementById('theme-status');if(note)note.textContent=theme.name+' · '+theme.label+' 적용 중';
   }
   window.MusicTheme={current:function(){return themes[active];},text:textFor,bind:bind,say:say,feedback:feedback};

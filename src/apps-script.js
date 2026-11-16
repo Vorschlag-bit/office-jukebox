@@ -10,7 +10,7 @@ export function validateBridge(config) {
 }
 
 export class AppsScriptWorker extends GoogleWorker {
-  constructor(options) { super(options); this.clientId = randomUUID(); this.health.transport = 'apps-script'; }
+  constructor(options) { super(options); this.clientId = randomUUID(); this.health.transport = 'apps-script'; this.publicUrl = options.publicUrl || null; }
   async bridge(op, data = {}) {
     const payload = JSON.stringify(data), ts = this.now(), nonce = randomUUID();
     const signature = createHmac('sha256', this.config.sharedSecret).update(`1\n${ts}\n${nonce}\n${op}\n${payload}`).digest('hex');
@@ -61,7 +61,7 @@ export class AppsScriptWorker extends GoogleWorker {
     const snapshot = this.engine.snapshot();
     const view = { current: snapshot.current ? { title: snapshot.current.title.slice(0, 180), status: snapshot.current.status } : null,
       queue: snapshot.queue.slice(0, 8).map(x => ({ id: x.id, title: x.title.slice(0, 180) })), queueCount: snapshot.queue.length,
-      paused: snapshot.paused, searchEnabled: !!this.engine.youtube.key, playerOnline: snapshot.player.online };
+      paused: snapshot.paused, searchEnabled: !!this.engine.youtube.key, playerOnline: snapshot.player.online, webUrl: this.publicUrl };
     const songs = snapshot.queue.map(x => ({ id: x.id, title: [...x.title].slice(0, 80).join('') }));
     const revision = createHash('sha256').update(JSON.stringify(songs)).digest('hex');
     const queueView = this.queueRevision === revision ? undefined : { revision, songs };

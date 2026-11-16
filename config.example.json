@@ -1,7 +1,7 @@
 {
   "host": "127.0.0.1",
   "port": 8787,
-  "lan": { "enabled": false, "hostnames": [], "advertise": false },
+  "lan": { "enabled": false, "hostnames": [], "advertise": false, "requests": { "enabled": false, "secret": "" } },
   "background": { "enabled": false },
   "tls": { "enabled": false, "port": 8788, "keyFile": "data/tls/server-key.pem", "certFile": "data/tls/server-cert.pem" },
   "adminToken": "REPLACE_WITH_RANDOM_TOKEN_AT_LEAST_32_CHARACTERS",

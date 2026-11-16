@@ -14,6 +14,7 @@ import { acquireLock, atomicJson } from './persistence.js';
 import { pairTvCode } from './lounge.js';
 import { createInterface } from 'node:readline/promises';
 import { assertRuntimeVersion, validLocalHostname } from './security.js';
+import { publicQueueUrl } from './public-requests.js';
 import { startBonjour } from './bonjour.js';
 
 
@@ -27,6 +28,8 @@ export function loadConfig(path) {
   check(c.lan?.hostnames === undefined || (Array.isArray(c.lan.hostnames) && c.lan.hostnames.length <= 5 && c.lan.hostnames.every(validLocalHostname)), 'CONFIG', 'lan.hostnames에는 실제 컴퓨터의 .local 이름을 최대 5개까지 지정하세요.');
   check(c.lan?.advertise === undefined || typeof c.lan.advertise === 'boolean', 'CONFIG', 'lan.advertise는 true 또는 false여야 합니다.');
   if (c.lan?.advertise) check(c.lan.enabled && c.lan.hostnames?.length && typeof c.lan.networkInterface === 'string' && /^[a-zA-Z0-9_.:-]{1,64}$/.test(c.lan.networkInterface), 'CONFIG', '이름 광고에는 LAN 공유, .local 이름과 네트워크 인터페이스가 필요합니다.');
+  check(c.lan?.requests === undefined || (c.lan.requests && typeof c.lan.requests.enabled === 'boolean'), 'CONFIG', 'lan.requests.enabled는 true 또는 false여야 합니다.');
+  if(c.lan?.requests?.enabled) check(c.lan.enabled && typeof c.lan.requests.secret === 'string' && c.lan.requests.secret.length >=32 && ![c.adminToken,c.playerToken,c.google?.sharedSecret].includes(c.lan.requests.secret),'CONFIG','웹 신청에는 별도 32자 이상의 세션 비밀이 필요합니다.');
   check(c.background === undefined || (c.background && typeof c.background.enabled === 'boolean'), 'CONFIG', 'background.enabled는 true 또는 false여야 합니다.');
   check(c.tls === undefined || (c.tls && typeof c.tls.enabled === 'boolean'), 'CONFIG', 'tls.enabled는 true 또는 false여야 합니다.');
   check(c.search === undefined || (c.search && typeof c.search.enabled === 'boolean'), 'CONFIG', 'search.enabled는 true 또는 false여야 합니다.');
@@ -115,7 +118,7 @@ async function main() {
   const server = createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, bonjour: bonjour ? bonjour.health : { enabled: false }, hardwareVerified: false }) });
   const secureServer = config.tls?.enabled ? createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, bonjour: bonjour ? bonjour.health : { enabled: false }, hardwareVerified: false }), tls: { key: readFileSync(resolve(dirname(configFile), config.tls.keyFile)), cert: readFileSync(resolve(dirname(configFile), config.tls.certFile)) } }) : null;
   if (config.google?.enabled) {
-    worker = new AppsScriptWorker({ config: config.google, engine });
+    worker = new AppsScriptWorker({ config: config.google, engine, publicUrl: publicQueueUrl(config) });
   }
   let readyCount = 0, stopping = false;
   const ready = () => {

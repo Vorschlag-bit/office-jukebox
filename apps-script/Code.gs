@@ -6,6 +6,7 @@ function jbRead(p, k, fallback) { var v = p.getProperty(k); return v ? JSON.pars
 function jbWrite(p, k, v) { p.setProperty(k, JSON.stringify(v)); }
 function jbSpaces(p) { var a = jbRead(p, 'ALLOWED_SPACES', []); if (!Array.isArray(a) || a.length > 10 || a.some(function(s) { return !/^spaces\/[A-Za-z0-9_-]+$/.test(s); })) throw Error('CONFIG'); return a; }
 function jbLocked(f) { var l = LockService.getScriptLock(); if (!l.tryLock(1000)) throw Error('BUSY'); try { return f(jbProps()); } finally { l.releaseLock(); } }
+function jbWebUrl(value) { var m=/^http:\/\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local):([0-9]{1,5})\/queue$/.exec(value || ''); return m && Number(m[2])>0 && Number(m[2])<=65535 ? value : null; }
 function jbSafe(s) { return String(s).replace(/</g, '‹').replace(/>/g, '›'); }
 function jbIndex(p, key, prefix, ttl, now) {
   var ids = jbRead(p, key, []), live = [];
@@ -42,6 +43,7 @@ function jbHandleMessage(e) {
     return jbLocked(function(p) {
       if (jbSpaces(p).indexOf(space) < 0) return { text: '허용되지 않은 스페이스입니다. 내정보로 ID를 확인하고 ALLOWED_SPACES를 설정하세요.' };
       if (text === '익명메뉴') return jbPanel(p, space, '', '푸루야! 선곡자는 다른 참여자에게 표시하지 않아. 신청은 아래 비공개 신청창에서!');
+      if (['웹','사이트','음악방','web','website'].indexOf(text)>=0) return jbPanel(p, space, u.name, '웹 음악방에서 곡명 검색과 링크 신청을 할 수 있어!');
       if (['메뉴', 'menu', '도움말', '명령어', 'help'].indexOf(text) >= 0) return jbPanel(p, space, u.name, '링크를 붙여 넣고 신청 버튼을 누르세요. 재생 제어와 결과 조회도 버튼으로 할 수 있어요.');
       if (['플리', '전체플리', '전체 플리', '대기열', 'queue'].indexOf(text) >= 0 && (p.getProperty('VIEW') || /플리/.test(text))) return jbQueuePanel(p, 0);
       if (['상태', 'status'].indexOf(text) >= 0 && p.getProperty('VIEW')) return jbPanel(p, space, u.name, '현재 음악방 상태입니다.');
@@ -97,7 +99,7 @@ function doPost(e) {
       if (r.op === 'pull') {
         jbWrite(p,'WORKER',{ id:d.clientId,until:now+45000 });
         var queueRevision = jbSaveQueueView(p, d.queueView, d.view);
-        if (d.view && Array.isArray(d.view.queue) && d.view.queue.length <= 8 && Number.isInteger(d.view.queueCount) && d.view.queueCount >= 0 && d.view.queueCount <= 500 && typeof d.view.paused === 'boolean' && typeof d.view.searchEnabled === 'boolean' && d.view.queue.every(function(x) { return x && typeof x.title === 'string' && x.title.length <= 180; }) && (!d.view.current || (typeof d.view.current.title === 'string' && d.view.current.title.length <= 180 && typeof d.view.current.status === 'string' && d.view.current.status.length <= 30))) { jbWrite(p, 'VIEW', { at: now, current: d.view.current, queue: d.view.queue, queueCount: d.view.queueCount, paused: d.view.paused, searchEnabled: d.view.searchEnabled, playerOnline: !!d.view.playerOnline, queueRevision: queueRevision }); }
+        if (d.view && Array.isArray(d.view.queue) && d.view.queue.length <= 8 && Number.isInteger(d.view.queueCount) && d.view.queueCount >= 0 && d.view.queueCount <= 500 && typeof d.view.paused === 'boolean' && typeof d.view.searchEnabled === 'boolean' && d.view.queue.every(function(x) { return x && typeof x.title === 'string' && x.title.length <= 180; }) && (!d.view.current || (typeof d.view.current.title === 'string' && d.view.current.title.length <= 180 && typeof d.view.current.status === 'string' && d.view.current.status.length <= 30))) { jbWrite(p, 'VIEW', { at: now, current: d.view.current, queue: d.view.queue, queueCount: d.view.queueCount, paused: d.view.paused, searchEnabled: d.view.searchEnabled, playerOnline: !!d.view.playerOnline, queueRevision: queueRevision, webUrl: jbWebUrl(d.view.webUrl) }); }
         if (!ids.length) return { ok:true,command:null,queueRevision:queueRevision };
         var c = jbRead(p,'q_'+ids[0],null);
         if (c.until > now) return { ok:true,command:null,queueRevision:queueRevision };
@@ -161,6 +163,8 @@ function jbPanel(p, space, user, message) {
     if (view.queueCount > view.queue.length) summary += '\n외 ' + (view.queueCount-view.queue.length) + '곡';
     widgets.push({ textParagraph: { text: jbHtml(summary) } });
   }
+  var webUrl = view && jbWebUrl(view.webUrl);
+  if(webUrl) widgets.push({textParagraph:{text:'🌐 웹 음악방 열기 · 검색/링크 신청<br>이 메시지 위쪽의 음악방 주소를 눌러 줘! 같은 회사 Wi-Fi에서 열려.'}});
   widgets.push({ buttonList: { buttons: [jbButton('♫ 전체 플리', 'queue-page:0'), jbButton('↻ 상태 새로고침', '메뉴'), jbButton('내 신청 결과 확인', '결과')] } });
   var sections = [{ widgets: widgets }, { header: '선곡자는 숨기고, 음악은 함께!', widgets: [
     { textParagraph: { text: '신청 링크는 채팅창에 직접 보내지 말고 아래 비공개 신청창에 넣어 줘. 창과 결과는 본인만 볼 수 있어. 공용 화면에는 곡만 표시해!<br><br>Google과 봇 운영자는 내부 식별 정보를 처리할 수 있어. 완전한 추적 불가능 익명은 아니야.' } },
@@ -179,7 +183,7 @@ function jbPanel(p, space, user, message) {
     if (/^[a-f0-9-]{36}$/.test(song.id || '')) return { buttonList: { buttons: [jbButton((i+1) + '. ' + song.title.slice(0, 55) + '  × 취소', '취소 id:' + song.id)] } };
     return { textParagraph: { text: jbHtml((i+1) + '. ' + song.title) } };
   }) });
-  return { text: message, cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '우사기 음악방', subtitle: jbTone('menu', message), imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
+  return { text: message + (webUrl ? '\n\n🌐 웹 음악방 · 검색/링크 신청\n'+webUrl+'\n같은 회사 Wi-Fi에서 열어 줘!' : ''), cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '우사기 음악방', subtitle: jbTone('menu', message), imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
 }
 function jbHandleClick(e) {
   try {

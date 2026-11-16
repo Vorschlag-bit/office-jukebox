@@ -73,9 +73,9 @@ export class Engine {
     }
     this.store.save();
   }
-  async command({ text, user = 'local', operator = false, eventId, space, thread }) {
+  async command({ text, user = 'local', operator = false, eventId, space, thread, selectionId, includeChoices = false }) {
     return this.serial(async () => {
-      if (eventId && Object.hasOwn(this.state.seen, eventId)) return this.state.seen[eventId].reply;
+      if (eventId && Object.hasOwn(this.state.seen, eventId)) return includeChoices ? structuredClone(this.state.seen[eventId].publicResult || {text:this.state.seen[eventId].reply}) : this.state.seen[eventId].reply;
       check(typeof text === 'string' && text.length <= 500, 'COMMAND', '명령은 500자 이내여야 합니다.');
       const [verb = '', ...parts] = text.trim().split(/\s+/);
       const arg = parts.join(' ');
@@ -115,11 +115,12 @@ export class Engine {
         this.state.candidates ||= {};
         for (const key of Object.keys(this.state.candidates)) if (this.state.candidates[key].expiresAt <= this.now()) delete this.state.candidates[key];
         check(Object.keys(this.state.candidates).length < 100 || this.state.candidates[user], 'CANDIDATES_FULL', '검색 사용자가 많습니다. 잠시 후 다시 시도하세요.');
-        this.state.candidates[user] = { songs, space, expiresAt: this.now() + 300000 };
+        this.state.candidates[user] = { songs, space, expiresAt: this.now() + 300000, selectionId: randomUUID() };
         reply = songs.map((x, i) => `${i + 1}. ${x.title}`).join('\n') + '\n5분 이내에 선택 <번호>를 보내세요.';
       } else if (['선택', 'select'].includes(verb.toLowerCase())) {
         const choice = this.state.candidates?.[user];
         check(choice && choice.expiresAt > this.now() && choice.space === space, 'CHOICE_EXPIRED', '검색 결과가 만료됐거나 다른 채팅방의 결과입니다. 다시 검색하세요.');
+        if(selectionId !== undefined) check(selectionId === choice.selectionId, 'CHOICE_EXPIRED', '새 검색 결과가 있어요. 화면에서 다시 검색한 뒤 골라 주세요.', 409);
         check(/^[1-5]$/.test(arg) && choice.songs[Number(arg) - 1], 'CHOICE', '검색 결과의 번호를 선택하세요.');
         await append(choice.songs[Number(arg) - 1]); delete this.state.candidates[user];
       } else if (['취소', 'cancel'].includes(verb.toLowerCase())) {
@@ -175,8 +176,9 @@ export class Engine {
           reply = stop ? (this.adapter.type === 'browser' ? '재생을 멈추고 대기열을 비웠어요.' : '정지 명령 전송 및 대기열 비움 완료. 기본 앱은 현장 정지를 확인하세요.') : '다음 곡으로 이동합니다.';
         }
       } else reply = '명령: 추가 <곡명/URL> · 목록 <재생목록 링크> [시작번호] · 검색 <곡명> · 선택 <번호> · 취소 <대기번호> · 대기열 · 상태 · 다음 · 정지 · 일시정지 · 계속 · 재시도 · 확인. 추가는 검색 첫 결과를 신청합니다.';
+      const publicResult = includeChoices ? { text: reply, ...(['검색','search'].includes(verb.toLowerCase()) ? { choices: this.state.candidates[user].songs.map(x=>({videoId:x.videoId,title:x.title})), selectionId: this.state.candidates[user].selectionId, expiresAt: this.state.candidates[user].expiresAt } : {}) } : undefined;
       if (eventId) {
-        Object.defineProperty(this.state.seen, eventId, { value: { reply: reply.slice(0, 4000), at: this.now() }, writable: true, enumerable: true, configurable: true });
+        Object.defineProperty(this.state.seen, eventId, { value: { reply: reply.slice(0, 4000), at: this.now(), ...(publicResult ? {publicResult} : {}) }, writable: true, enumerable: true, configurable: true });
         // Bound deduplication storage; delivery TTL and Pub/Sub retention are separate concerns.
         const keys = Object.keys(this.state.seen);
         for (const key of keys.slice(0, Math.max(0, keys.length - 5000))) delete this.state.seen[key];
@@ -184,7 +186,7 @@ export class Engine {
       }
       this.store.save();
       await this.dispatch();
-      return reply;
+      return publicResult || reply;
     });
   }
   async heartbeat(clientId) {
