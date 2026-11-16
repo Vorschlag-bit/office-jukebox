@@ -259,3 +259,7 @@ Google 요청은 5분 이상 오래되면 폐기합니다. 서비스 중단 중 
 `background.enabled: true`로 켜면 신청곡이 없을 때 한국 시간의 현재 연도·계절에 맞는 재즈/피아노 영상을 자동 재생합니다. 우사기 배경음악이 재생 중일 때 새 신청곡이 들어오면 신청곡을 우선합니다. 정지·일시정지·TV 수동 선택·복구 상태를 존중하며, 검색 API는 필요하지 않습니다. [동작·기본 영상·정지 및 복구 안내](docs/BACKGROUND.md)를 참고하세요.
 
 웹 타이포그래피는 제목·버튼에 **Gamja Flower(감자꽃)**, 본문·곡 목록에 **Gowun Dodum(고운 돋움)**을 사용합니다. [Google Fonts 한글 폰트](https://googlefonts.github.io/korean/)의 OFL 웹폰트이며 Google Fonts CSS/폰트 서버에서 로드합니다. 폰트 서버에 연결할 수 없어도 시스템 한글 폰트로 표시합니다. CSP는 폰트에 필요한 두 Google 호스트만 추가 허용합니다.
+
+### 보안 운영
+
+Node 24.22.3 이상(24 LTS) 또는 26.13.1 이상(26 LTS)을 사용합니다. 다른 LAN 기기의 관리자·재생기 제어는 HTTPS가 필수이며 일반 HTTP에서는 거부합니다. 공개 플리 읽기와 localhost 관리는 유지합니다. 검색은 API 키 저장과 별개로 `search.enabled: true`로 명시적으로 켭니다. 인증서·키 관리와 점검 범위는 [보안 안내](docs/SECURITY.md)를 참고하세요.

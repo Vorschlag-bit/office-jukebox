@@ -104,6 +104,7 @@ function poll() {
 window.onYouTubeIframeAPIReady = function () { apiReady = true; poll(); };
 var apiLoading = false;
 function connectToken(value) {
+  if(window.location.protocol === 'http:' && ['localhost','127.0.0.1','[::1]','::1'].indexOf(window.location.hostname) < 0) { notice('재생기 키는 HTTPS 또는 localhost에서만 사용할 수 있어요.'); return; }
   token = value.trim(); connected = true; document.getElementById('login').hidden = true;
   if (!apiReady && !apiLoading) {
     apiLoading = true; var script = document.createElement('script'); script.src = 'https://www.youtube.com/iframe_api';

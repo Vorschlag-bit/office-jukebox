@@ -13,16 +13,23 @@ import { probe } from './probe.js';
 import { acquireLock, atomicJson } from './persistence.js';
 import { pairTvCode } from './lounge.js';
 import { createInterface } from 'node:readline/promises';
+import { assertRuntimeVersion } from './security.js';
 
 
 export function loadConfig(path) {
   const c = JSON.parse(readFileSync(path, 'utf8'));
-  check(typeof c.adminToken === 'string' && c.adminToken.length >= 32 && !c.adminToken.includes('REPLACE'), 'CONFIG', 'init 명령으로 관리자 토큰을 생성하세요.');
-  check(typeof c.playerToken === 'string' && c.playerToken.length >= 32 && c.playerToken !== c.adminToken && !c.playerToken.includes('RANDOM'), 'CONFIG', '서로 다른 32자 이상의 재생기 토큰이 필요합니다.');
+  check(typeof c.adminToken === 'string' && c.adminToken.length >= 32 && c.adminToken.length <= 256 && !c.adminToken.includes('REPLACE'), 'CONFIG', 'init 명령으로 관리자 토큰을 생성하세요.');
+  check(typeof c.playerToken === 'string' && c.playerToken.length >= 32 && c.playerToken.length <= 256 && c.playerToken !== c.adminToken && !c.playerToken.includes('RANDOM'), 'CONFIG', '서로 다른 32자 이상의 재생기 토큰이 필요합니다.');
   check(Number.isInteger(c.port) && c.port >= 0 && c.port <= 65535, 'CONFIG', '잘못된 포트 번호');
   check(typeof c.host === 'string' && c.adapter?.type, 'CONFIG', 'host와 adapter.type이 필요합니다.');
   check(c.lan === undefined || (c.lan && typeof c.lan.enabled === 'boolean'), 'CONFIG', 'lan.enabled는 true 또는 false여야 합니다.');
   check(c.background === undefined || (c.background && typeof c.background.enabled === 'boolean'), 'CONFIG', 'background.enabled는 true 또는 false여야 합니다.');
+  check(c.tls === undefined || (c.tls && typeof c.tls.enabled === 'boolean'), 'CONFIG', 'tls.enabled는 true 또는 false여야 합니다.');
+  check(c.search === undefined || (c.search && typeof c.search.enabled === 'boolean'), 'CONFIG', 'search.enabled는 true 또는 false여야 합니다.');
+  if (c.tls?.enabled) {
+    check(Number.isInteger(c.tls.port) && c.tls.port > 0 && c.tls.port <= 65535 && c.tls.port !== c.port, 'CONFIG', 'HTTPS 전용 포트가 필요합니다.');
+    check(typeof c.tls.keyFile === 'string' && typeof c.tls.certFile === 'string', 'CONFIG', 'HTTPS 인증서 파일 경로가 필요합니다.');
+  }
   check(Number.isInteger(c.maxQueue) && c.maxQueue > 0 && c.maxQueue <= 500 && Number.isInteger(c.queueTtlMs) && c.queueTtlMs >= 60000, 'CONFIG', '대기열 한도와 만료 시간을 확인하세요.');
   c.perUserLimit ??= 5; c.autoSkipUnplayable ??= true; c.handshakeTimeoutMs ??= 45000;
   check(Number.isInteger(c.perUserLimit) && c.perUserLimit >= 0 && c.perUserLimit <= 100, 'CONFIG', 'perUserLimit는 0~100 사이 정수여야 합니다.');
@@ -36,6 +43,7 @@ export function loadConfig(path) {
   return c;
 }
 async function main() {
+  assertRuntimeVersion();
   const base = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const configFile = resolve(process.env.JUKEBOX_CONFIG || `${base}/config.local.json`);
   if (process.argv[2] === 'init') {
@@ -98,22 +106,29 @@ async function main() {
   const release = acquireLock(dataDirectory);
   process.once('exit', release);
   const store = new Store(dataDirectory);
-  const engine = new Engine({ store, youtube: new YouTube(config.youtubeApiKey, fetch, Date.now, { resolveTitles: !!config.resolveVideoTitles }), adapter, maxQueue: config.maxQueue, queueTtlMs: config.queueTtlMs, perUserLimit: config.perUserLimit, autoSkipUnplayable: config.autoSkipUnplayable, handshakeTimeoutMs: config.handshakeTimeoutMs, background: config.background });
+  const engine = new Engine({ store, youtube: new YouTube(config.search?.enabled === true ? config.youtubeApiKey : '', fetch, Date.now, { resolveTitles: !!config.resolveVideoTitles }), adapter, maxQueue: config.maxQueue, queueTtlMs: config.queueTtlMs, perUserLimit: config.perUserLimit, autoSkipUnplayable: config.autoSkipUnplayable, handshakeTimeoutMs: config.handshakeTimeoutMs, background: config.background });
   let worker;
   const server = createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, hardwareVerified: false }) });
+  const secureServer = config.tls?.enabled ? createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, hardwareVerified: false }), tls: { key: readFileSync(resolve(dirname(configFile), config.tls.keyFile)), cert: readFileSync(resolve(dirname(configFile), config.tls.certFile)) } }) : null;
   if (config.google?.enabled) {
     worker = new AppsScriptWorker({ config: config.google, engine });
   }
+  let readyCount = 0, stopping = false;
+  const ready = () => {
+    if (++readyCount !== (secureServer ? 2 : 1) || stopping) return;
+    void engine.start().catch(error => console.warn(`STARTUP_RECOVERY: ${error.code || 'TV_STATE_UNKNOWN'}. 대기열은 보존됐습니다.`));
+    if (worker) void worker.start();
+  };
   server.listen(config.port, config.host, () => {
     console.log(`Office Jukebox: http://${config.host}:${server.address().port}`);
     console.log('관리 화면 / · 재생 화면 /player · 토큰은 config.local.json에서 확인');
-    void engine.start().catch(error => console.warn(`STARTUP_RECOVERY: ${error.code || 'TV_STATE_UNKNOWN'}. 대기열은 보존됐습니다.`));
-    if (worker) void worker.start();
+    ready();
   });
+  if (secureServer) secureServer.listen(config.tls.port, config.host, () => { console.log(`HTTPS 관리 포트: ${secureServer.address().port}`); ready(); });
   const watchdog = setInterval(() => { void engine.tick().catch(() => console.warn('STATE_WRITE: 저장소 상태를 확인하세요.')); }, 2000);
   watchdog.unref();
-  server.on('error', error => { console.error(error.code === 'EADDRINUSE' ? 'PORT_IN_USE: 포트가 이미 사용 중입니다.' : 'SERVER_ERROR: 서버를 시작하지 못했습니다.'); adapter.close?.(); release(); process.exitCode = 1; clearInterval(watchdog); });
-  const shutdown = () => { clearInterval(watchdog); worker?.stop(); adapter.close?.(); server.close(() => { release(); process.exit(0); }); setTimeout(() => process.exit(0), 3000).unref(); };
+  const shutdown = () => { if(stopping) return; stopping = true; clearInterval(watchdog); worker?.stop(); adapter.close?.(); server.close(); secureServer?.close(); setTimeout(() => { server.closeAllConnections(); secureServer?.closeAllConnections(); release(); process.exit(process.exitCode || 0); }, 1000); };
+  for (const listener of [server, secureServer].filter(Boolean)) listener.on('error', error => { console.error(error.code === 'EADDRINUSE' ? 'PORT_IN_USE: 포트가 이미 사용 중입니다.' : 'SERVER_ERROR: 서버를 시작하지 못했습니다.'); process.exitCode = 1; shutdown(); });
   process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(e => { console.error(e instanceof AppError ? `${e.code}: ${e.message}` : 'STARTUP: 시작하지 못했습니다. 설정 파일 형식·파일 권한·저장소 상태를 확인하세요.'); process.exitCode = 1; });

@@ -7,6 +7,7 @@ function loadQueue() {
   activeRequest = true;
   return fetch('/api/public/queue',{cache:'no-store',signal:AbortSignal.timeout(10000)}).then(function(r) { return r.json().then(function(s) { if(!r.ok) { if(r.status===404) stopped=true; throw new Error(s.message || '연결을 확인해 줘.'); } return s; }); }).then(function(s) {
     byId('shared-label').textContent=s.current && s.current.status==='playing' ? 'NOW PLAYING ♫' : s.current ? '재생 상태 확인 중' : '다음 노래를 기다려 ♫';
+    if(s.adminTlsPort && ['localhost','127.0.0.1','[::1]','::1'].indexOf(window.location.hostname) < 0) { byId('shared-admin').href='https://'+window.location.hostname+':'+s.adminTlsPort+'/'; byId('shared-admin').textContent='HTTPS 관리자 로그인 ↗'; byId('shared-admin-help').hidden=false; }
     byId('shared-title').textContent = s.current ? s.current.title : '쥬르리… 첫 신청곡을 기다려!';
     byId('shared-status').textContent = s.current ? statuses[s.current.status] || '재생 상태 확인 중' : s.paused ? '대기열이 일시정지됐어.' : '아직 재생 중인 곡이 없어.';
     byId('shared-art').src = s.current ? 'https://i.ytimg.com/vi/'+encodeURIComponent(s.current.videoId)+'/mqdefault.jpg' : '/usagi-cheer.jpg';

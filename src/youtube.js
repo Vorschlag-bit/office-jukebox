@@ -95,9 +95,9 @@ export class YouTube {
     const cacheKey = `${embedded}:${query.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
     if (hit && hit.expires > this.now()) return structuredClone(hit.tracks);
-    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '5', q: query, key: this.key, safeSearch: 'moderate' });
+    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '5', q: query, safeSearch: 'moderate' });
     if (embedded) { params.set('videoEmbeddable', 'true'); params.set('videoSyndicated', 'true'); }
-    const data = await jsonFetch(`https://www.googleapis.com/youtube/v3/search?${params}`, {}, this.fetcher);
+    const data = await jsonFetch(`https://www.googleapis.com/youtube/v3/search?${params}`, { redirect: 'error', headers: { 'x-goog-api-key': this.key } }, this.fetcher);
     const items = data.items?.filter(x => videoId(x.id?.videoId || '')).slice(0, 5) || [];
     check(items.length, 'NOT_FOUND', '검색 결과가 없습니다. 유튜브 URL로 신청해 주세요.');
     const tracks = items.map(item => ({ videoId: item.id.videoId, title: decodeTitle(String(item.snippet?.title || query)).slice(0, 300), source: 'search' }));
