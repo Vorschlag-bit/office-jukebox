@@ -14,6 +14,7 @@ import { acquireLock, atomicJson } from './persistence.js';
 import { pairTvCode } from './lounge.js';
 import { createInterface } from 'node:readline/promises';
 import { assertRuntimeVersion, validLocalHostname } from './security.js';
+import { startBonjour } from './bonjour.js';
 
 
 export function loadConfig(path) {
@@ -24,6 +25,8 @@ export function loadConfig(path) {
   check(typeof c.host === 'string' && c.adapter?.type, 'CONFIG', 'host와 adapter.type이 필요합니다.');
   check(c.lan === undefined || (c.lan && typeof c.lan.enabled === 'boolean'), 'CONFIG', 'lan.enabled는 true 또는 false여야 합니다.');
   check(c.lan?.hostnames === undefined || (Array.isArray(c.lan.hostnames) && c.lan.hostnames.length <= 5 && c.lan.hostnames.every(validLocalHostname)), 'CONFIG', 'lan.hostnames에는 실제 컴퓨터의 .local 이름을 최대 5개까지 지정하세요.');
+  check(c.lan?.advertise === undefined || typeof c.lan.advertise === 'boolean', 'CONFIG', 'lan.advertise는 true 또는 false여야 합니다.');
+  if (c.lan?.advertise) check(c.lan.enabled && c.lan.hostnames?.length && typeof c.lan.networkInterface === 'string' && /^[a-zA-Z0-9_.:-]{1,64}$/.test(c.lan.networkInterface), 'CONFIG', '이름 광고에는 LAN 공유, .local 이름과 네트워크 인터페이스가 필요합니다.');
   check(c.background === undefined || (c.background && typeof c.background.enabled === 'boolean'), 'CONFIG', 'background.enabled는 true 또는 false여야 합니다.');
   check(c.tls === undefined || (c.tls && typeof c.tls.enabled === 'boolean'), 'CONFIG', 'tls.enabled는 true 또는 false여야 합니다.');
   check(c.search === undefined || (c.search && typeof c.search.enabled === 'boolean'), 'CONFIG', 'search.enabled는 true 또는 false여야 합니다.');
@@ -108,9 +111,9 @@ async function main() {
   process.once('exit', release);
   const store = new Store(dataDirectory);
   const engine = new Engine({ store, youtube: new YouTube(config.search?.enabled === true ? config.youtubeApiKey : '', fetch, Date.now, { resolveTitles: !!config.resolveVideoTitles }), adapter, maxQueue: config.maxQueue, queueTtlMs: config.queueTtlMs, perUserLimit: config.perUserLimit, autoSkipUnplayable: config.autoSkipUnplayable, handshakeTimeoutMs: config.handshakeTimeoutMs, background: config.background });
-  let worker;
-  const server = createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, hardwareVerified: false }) });
-  const secureServer = config.tls?.enabled ? createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, hardwareVerified: false }), tls: { key: readFileSync(resolve(dirname(configFile), config.tls.keyFile)), cert: readFileSync(resolve(dirname(configFile), config.tls.certFile)) } }) : null;
+  let worker, bonjour;
+  const server = createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, bonjour: bonjour ? bonjour.health : { enabled: false }, hardwareVerified: false }) });
+  const secureServer = config.tls?.enabled ? createServer({ engine, config, diagnostics: () => ({ google: worker ? worker.health : { enabled: false }, bonjour: bonjour ? bonjour.health : { enabled: false }, hardwareVerified: false }), tls: { key: readFileSync(resolve(dirname(configFile), config.tls.keyFile)), cert: readFileSync(resolve(dirname(configFile), config.tls.certFile)) } }) : null;
   if (config.google?.enabled) {
     worker = new AppsScriptWorker({ config: config.google, engine });
   }
@@ -119,6 +122,10 @@ async function main() {
     if (++readyCount !== (secureServer ? 2 : 1) || stopping) return;
     void engine.start().catch(error => console.warn(`STARTUP_RECOVERY: ${error.code || 'TV_STATE_UNKNOWN'}. 대기열은 보존됐습니다.`));
     if (worker) void worker.start();
+    if (config.lan?.advertise) {
+      try { bonjour = startBonjour({ hostname: config.lan.hostnames[0], port: server.address().port, interfaceName: config.lan.networkInterface }); }
+      catch { console.warn('BONJOUR_START: 이름 광고를 시작하지 못했습니다. 기존 주소로 서버는 사용할 수 있습니다.'); }
+    }
   };
   server.listen(config.port, config.host, () => {
     console.log(`Office Jukebox: http://${config.host}:${server.address().port}`);
@@ -128,7 +135,7 @@ async function main() {
   if (secureServer) secureServer.listen(config.tls.port, config.host, () => { console.log(`HTTPS 관리 포트: ${secureServer.address().port}`); ready(); });
   const watchdog = setInterval(() => { void engine.tick().catch(() => console.warn('STATE_WRITE: 저장소 상태를 확인하세요.')); }, 2000);
   watchdog.unref();
-  const shutdown = () => { if(stopping) return; stopping = true; clearInterval(watchdog); worker?.stop(); adapter.close?.(); server.close(); secureServer?.close(); setTimeout(() => { server.closeAllConnections(); secureServer?.closeAllConnections(); release(); process.exit(process.exitCode || 0); }, 1000); };
+  const shutdown = () => { if(stopping) return; stopping = true; clearInterval(watchdog); bonjour?.stop(); worker?.stop(); adapter.close?.(); server.close(); secureServer?.close(); setTimeout(() => { server.closeAllConnections(); secureServer?.closeAllConnections(); release(); process.exit(process.exitCode || 0); }, 1000); };
   for (const listener of [server, secureServer].filter(Boolean)) listener.on('error', error => { console.error(error.code === 'EADDRINUSE' ? 'PORT_IN_USE: 포트가 이미 사용 중입니다.' : 'SERVER_ERROR: 서버를 시작하지 못했습니다.'); process.exitCode = 1; shutdown(); });
   process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 }
