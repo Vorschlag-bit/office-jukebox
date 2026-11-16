@@ -63,3 +63,38 @@ test('public playlist fetch is canonical, bounded, caches briefly and fails with
   await assert.rejects(new YouTube('',async()=>{throw Error('offline')}).playlist(url),{code:'PLAYLIST_NETWORK'});
   await assert.rejects(new YouTube('',async()=>new Response('x'.repeat(5*1024*1024+1))).playlist(url),{code:'UPSTREAM_SIZE'});
 });
+
+test('search failures explain configuration and quota without echoing raw provider errors or credentials', async () => {
+  for(const [status,body,code] of [
+    [400,{error:{details:[{reason:'API_KEY_INVALID'}]}},'YOUTUBE_KEY_INVALID'],
+    [403,{error:{errors:[{reason:'accessNotConfigured'}]}},'YOUTUBE_API_CONFIG'],
+    [403,{error:{details:[{reason:'API_KEY_SERVICE_BLOCKED'}]}},'YOUTUBE_API_CONFIG'],
+    [403,{error:{errors:[{reason:'quotaExceeded'}]}},'YOUTUBE_QUOTA'],
+    [429,{},'YOUTUBE_QUOTA']
+  ]) {
+    let calls=0,now=0;const yt=new YouTube('private-api-key',async()=>{calls++;return new Response(JSON.stringify({...body,raw:'private-api-key'}),{status});},()=>now);
+    await assert.rejects(yt.search('song'),e=>e.code===code&&!e.message.includes('private-api-key'));
+    if(code==='YOUTUBE_QUOTA') {await assert.rejects(yt.search('other'),{code});assert.equal(calls,1);assert.equal((await yt.resolve('https://youtu.be/dQw4w9WgXcQ')).source,'url');now=60001;await assert.rejects(yt.search('other'),{code});assert.equal(calls,2);}
+  }
+});
+test('concurrent identical searches share one bounded request, normalize titles and isolate cached results', async () => {
+  let calls=0;const yt=new YouTube('key',async(url,options)=>{calls++;assert.equal(options.redirect,'error');assert.equal(options.headers['x-goog-api-key'],'key');assert.equal(new URL(url).searchParams.has('key'),false);assert.ok(options.signal);await new Promise(r=>setImmediate(r));return new Response(JSON.stringify({items:[{id:{videoId:'dQw4w9WgXcQ'},snippet:{title:'A\n2. injected &amp; B'}},{id:{videoId:'dQw4w9WgXcQ'},snippet:{title:'duplicate'}},{id:{videoId:'invalid'}}]}));});
+  const [a,b]=await Promise.all([yt.search('some   song'),yt.search('some song')]);assert.equal(calls,1);assert.equal(a.length,1);assert.equal(a[0].title,'A 2. injected & B');a[0].title='changed';assert.notEqual(b[0].title,a[0].title);
+  assert.notEqual((await yt.search('some song'))[0].title,'changed');assert.equal(calls,1);
+});
+test('search real loopback HTTP handles provider errors and retries after malformed responses without poisoning cache', async t => {
+  const {createServer}=await import('node:http');let count=0;
+  const server=createServer((req,res)=>{count++;res.setHeader('content-type','application/json');res.end(count===1?'bad-json':JSON.stringify({items:[{id:{videoId:'dQw4w9WgXcQ'},snippet:{title:'valid'}}]}));});
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>server.close(r)));
+  const yt=new YouTube('fake-key',(url,options)=>{assert.equal(new URL(url).hostname,'www.googleapis.com');return fetch(`http://127.0.0.1:${server.address().port}/provider`,options);});
+  await assert.rejects(yt.search('song'),{code:'UPSTREAM_FORMAT'});assert.equal((await yt.search('song'))[0].title,'valid');assert.equal(count,2);
+});
+
+test('standalone search readiness check defaults to no network and never changes queue or prints keys', async t => {
+  const {mkdtempSync,writeFileSync,readFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {spawnSync}=await import('node:child_process');
+  const dir=mkdtempSync(join(tmpdir(),'jukebox-search-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const file=join(dir,'config.json'),queue=join(dir,'state.json');writeFileSync(queue,'preserved');
+  const run=(args=[])=>spawnSync(process.execPath,[new URL('../bin/check-search.js',import.meta.url).pathname,...args],{env:{...process.env,JUKEBOX_CONFIG:file},encoding:'utf8',timeout:5000});
+  writeFileSync(file,JSON.stringify({youtubeApiKey:''}));assert.equal(run().status,1);
+  writeFileSync(file,JSON.stringify({youtubeApiKey:'never-print-this-secret'}));const ready=run();assert.equal(ready.status,0);assert.doesNotMatch(ready.stdout+ready.stderr,/never-print-this-secret/);
+  const invalid=run(['--live']);assert.equal(invalid.status,1);assert.match(invalid.stderr,/QUERY/);assert.equal(readFileSync(queue,'utf8'),'preserved');
+});

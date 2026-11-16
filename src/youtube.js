@@ -50,7 +50,7 @@ export function parsePlaylistPage(html, id) {
 }
 
 export class YouTube {
-  constructor(key = '', fetcher = fetch, now = Date.now, { resolveTitles = false } = {}) { this.key = key; this.fetcher = fetcher; this.now = now; this.cache = new Map(); this.resolveTitles = resolveTitles; }
+  constructor(key = '', fetcher = fetch, now = Date.now, { resolveTitles = false } = {}) { this.key = key; this.fetcher = fetcher; this.now = now; this.cache = new Map(); this.resolveTitles = resolveTitles; this.searchPending = new Map(); this.searchBlockedUntil = 0; }
   async playlist(input) {
     const id = playlistId(input);
     check(id, 'PLAYLIST_URL', '공유된 YouTube 재생목록 링크를 넣어 주세요. 자동 믹스·라디오는 지원하지 않습니다.');
@@ -70,7 +70,7 @@ export class YouTube {
   }
   async search(query, embedded = true) {
     check(typeof query === 'string' && query.trim().length > 0 && query.length <= 300, 'QUERY', '곡명 또는 유튜브 URL을 300자 이내로 입력하세요.');
-    query = query.trim();
+    query = query.trim().replace(/\s+/g, ' ');
     const id = videoId(query);
     if (id) {
       let title = `YouTube ${id}`;
@@ -95,12 +95,38 @@ export class YouTube {
     const cacheKey = `${embedded}:${query.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
     if (hit && hit.expires > this.now()) return structuredClone(hit.tracks);
-    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '5', q: query, key: this.key, safeSearch: 'moderate' });
+    check(this.now() >= this.searchBlockedUntil, 'YOUTUBE_QUOTA', 'YouTube 검색 한도에 도달했어요. 잠시 후 다시 검색하거나 링크로 신청해 줘.', 429);
+    if (this.searchPending.has(cacheKey)) return structuredClone(await this.searchPending.get(cacheKey));
+    const pending = this.fetchSearch(query, embedded, cacheKey);
+    this.searchPending.set(cacheKey, pending);
+    try { return structuredClone(await pending); }
+    finally { this.searchPending.delete(cacheKey); }
+  }
+  async fetchSearch(query, embedded, cacheKey) {
+    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '5', q: query, safeSearch: 'moderate' });
     if (embedded) { params.set('videoEmbeddable', 'true'); params.set('videoSyndicated', 'true'); }
-    const data = await jsonFetch(`https://www.googleapis.com/youtube/v3/search?${params}`, {}, this.fetcher);
-    const items = data.items?.filter(x => videoId(x.id?.videoId || '')).slice(0, 5) || [];
+    let response;
+    try { response = await this.fetcher(`https://www.googleapis.com/youtube/v3/search?${params}`, { redirect: 'error', headers: { 'x-goog-api-key': this.key }, signal: AbortSignal.timeout(10000) }); }
+    catch { throw new AppError('NETWORK', 'YouTube 검색 연결이 끊겼어요. 잠시 후 다시 시도해 줘.', 502); }
+    let data;
+    try { data = response.text ? JSON.parse(await boundedText(response, 65536)) : await response.json?.(); }
+    catch { if (response.ok) throw new AppError('UPSTREAM_FORMAT', 'YouTube 검색 응답을 읽지 못했어요.', 502); }
+    if (!response.ok) {
+      const reasons = (data?.error?.errors || []).map(x => x.reason);
+      for (const detail of data?.error?.details || []) if (typeof detail.reason === 'string') reasons.push(detail.reason);
+      if (response.status === 429 || reasons.some(x => ['quotaExceeded', 'dailyLimitExceeded', 'rateLimitExceeded'].includes(x))) {
+        this.searchBlockedUntil = this.now() + 60000;
+        throw new AppError('YOUTUBE_QUOTA', 'YouTube 검색 한도에 도달했어요. 링크 신청은 계속 사용할 수 있어. Cloud 콘솔의 할당량을 확인해 줘.', 429);
+      }
+      if (reasons.some(x => ['keyInvalid', 'API_KEY_INVALID'].includes(x))) throw new AppError('YOUTUBE_KEY_INVALID', '검색 API 키가 올바르지 않아. 운영자가 키 설정을 확인해 줘.', 502);
+      if (reasons.some(x => ['accessNotConfigured', 'ipRefererBlocked', 'forbidden', 'SERVICE_DISABLED', 'API_KEY_SERVICE_BLOCKED', 'API_KEY_IP_ADDRESS_BLOCKED'].includes(x))) throw new AppError('YOUTUBE_API_CONFIG', 'YouTube Data API 활성화와 키 제한 설정을 확인해 줘.', 502);
+      throw new AppError('UPSTREAM', `YouTube 검색 응답 오류: HTTP ${response.status}`, 502);
+    }
+    check(Array.isArray(data?.items), 'UPSTREAM_FORMAT', 'YouTube 검색 결과 형식이 달라졌어요.', 502);
+    const seen = new Set();
+    const items = data.items.filter(x => { const id = videoId(x?.id?.videoId || ''); if (!id || seen.has(id)) return false; seen.add(id); return true; }).slice(0, 5);
     check(items.length, 'NOT_FOUND', '검색 결과가 없습니다. 유튜브 URL로 신청해 주세요.');
-    const tracks = items.map(item => ({ videoId: item.id.videoId, title: decodeTitle(String(item.snippet?.title || query)).slice(0, 300), source: 'search' }));
+    const tracks = items.map(item => ({ videoId: item.id.videoId, title: decodeTitle(String(item.snippet?.title || query)).replace(/\s+/g, ' ').slice(0, 180), source: 'search' }));
     if (this.cache.size >= 200) this.cache.delete(this.cache.keys().next().value);
     this.cache.set(cacheKey, { tracks, expires: this.now() + 3600000 });
     return structuredClone(tracks);

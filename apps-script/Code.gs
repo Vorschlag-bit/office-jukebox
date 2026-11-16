@@ -284,22 +284,29 @@ function jbAnonymousDialog(e, command, field, space, user) {
     if (command === 'open-private-result') {
       var result = jbRead(jbProps(), 'r_' + jbHash(space + '/' + user.name), null);
       var message = result && Date.now() - result.at < 86400000 ? result.text : '아직 처리 결과가 없어. 신청 후 보통 5~10초 뒤 다시 열어 줘!';
-      return jbDialog({ sections: [{ header: '내 신청 결과 · 본인만 표시', widgets: [{ textParagraph: { text: jbHtml(jbSpeakResponse({ text: message }).text) } }] }] });
+      var widgets = [{ textParagraph: { text: jbHtml(jbSpeakResponse({ text: message }).text) } }];
+      if (result && Date.now() - result.at < JB_TTL && /5분 이내에 선택/.test(message)) {
+        var choices = message.split('\n').filter(function(line) { return /^[1-5]\. /.test(line); });
+        choices.forEach(function(line) { widgets.push({ buttonList: { buttons: [jbButton(line.slice(0, 85) + ' ＋ 신청', 'anonymous-select:' + line.charAt(0))] } }); });
+      }
+      return jbDialog({ sections: [{ header: '내 신청 결과 · 본인만 표시', widgets: widgets }] });
     }
     var view = jbRead(jbProps(), 'VIEW', null);
     var buttons = [jbButton('한 곡 신청', 'anonymous-add', 'privateSong'), jbButton('♫ 목록 담기', 'anonymous-playlist', 'privateSong')];
     if (view && view.searchEnabled) buttons.push(jbButton('곡명 검색', 'anonymous-search', 'privateSong'));
     return jbDialog({ sections: [{ header: '우사기 비공개 신청창', widgets: [
       { textParagraph: { text: '푸루야! 이 창과 입력 내용은 다른 참여자에게 안 보여. 신청 결과도 비공개로 확인해 줘.<br>공용 화면에는 곡이 표시돼. Google·봇 운영자는 내부 식별 정보를 처리할 수 있어.' } },
-      { textInput: { name: 'privateSong', label: 'YouTube 영상·재생목록 링크', hintText: '채팅창에 보내지 말고 여기에 붙여 넣어 줘!', type: 'SINGLE_LINE' } },
+      { textInput: { name: 'privateSong', label: view && view.searchEnabled ? 'YouTube 링크 또는 검색할 곡명' : 'YouTube 영상·재생목록 링크', hintText: view && view.searchEnabled ? '곡명은 곡명 검색 → 내 신청 결과에서 골라 줘!' : '채팅창에 보내지 말고 여기에 붙여 넣어 줘!', type: 'SINGLE_LINE' } },
       { buttonList: { buttons: buttons } }
     ] }] });
   }
-  if (e.dialogEventType !== 'SUBMIT_DIALOG' || !/^anonymous-(add|playlist|search)$/.test(command || '')) return { text: '지원하지 않는 비공개 신청입니다. 새 신청창을 열어 줘.' };
-  var song = field('privateSong');
+  if (e.dialogEventType !== 'SUBMIT_DIALOG' || !/^anonymous-(add|playlist|search|select:[1-5])$/.test(command || '')) return { text: '지원하지 않는 비공개 신청입니다. 새 신청창을 열어 줘.' };
+  var selected = /^anonymous-select:[1-5]$/.test(command || '');
+  var song = selected ? command.slice(-1) : field('privateSong');
   if (!song || song.length > 300) return jbDialogStatus('INVALID_ARGUMENT', '하아? 링크 또는 곡명을 1~300자로 입력해 줘!');
   if (!e.eventTime || !e.message || !e.message.name) return jbDialogStatus('INVALID_ARGUMENT', '요청을 확인하지 못했어. 새 신청창을 열어 줘.');
-  var verb = { 'anonymous-add': '추가', 'anonymous-playlist': '목록', 'anonymous-search': '검색' }[command];
+  if (command === 'anonymous-search' && !jbRead(jbProps(), 'VIEW', {}).searchEnabled) return jbDialogStatus('INVALID_ARGUMENT', '검색 준비 중이야. 지금은 YouTube 링크로 신청해 줘!');
+  var verb = selected ? '선택' : { 'anonymous-add': '추가', 'anonymous-playlist': '목록', 'anonymous-search': '검색' }[command];
   var request = { eventTime: e.eventTime, space: { name: space }, user: user, message: { name: space + '/messages/private-' + jbHash(e.message.name + '/' + user.name + '/' + e.eventTime + '/' + command + '/' + song), argumentText: verb + ' ' + song, sender: user } };
   var result = jbHandleMessage(request), accepted = /접수했습니다|이미 접수/.test(result.text || '');
   return jbDialogStatus(accepted ? 'OK' : 'INVALID_ARGUMENT', accepted ? '푸루! 비공개로 접수했어. 아직 재생 확인은 아니야. 잠시 후 내 신청 결과 · 비공개에서 확인해 줘!' : String(result.text || '신청을 확인하지 못했어.'));

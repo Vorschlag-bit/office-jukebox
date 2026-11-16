@@ -290,3 +290,17 @@ test('queue revision acknowledgement resends after bridge reset and malformed fu
   r.props.delete('QUEUE_VIEW');await w.cycle();assert.equal(w.queueRevision,null);await w.cycle();assert.equal(JSON.parse(r.props.get('QUEUE_VIEW')).revision,revision);
   const bad=r.call('pull',{clientId:w.clientId,view:{queueCount:1},queueView:{revision:'a'.repeat(64),songs:[{id:randomUUID(),title:'x'.repeat(81)}]}});assert.equal(bad.ok,false);assert.equal(JSON.parse(r.props.get('QUEUE_VIEW')).revision,revision);
 });
+
+test('private search dialog returns selectable results only to their owner and enqueues chosen song once', async () => {
+  const r=runtime(),e=engine(r),w=worker(e,r);e.youtube.key='test-only';e.youtube.search=async()=>[{videoId:'dQw4w9WgXcQ',title:'first',source:'search'},{videoId:'s7gef3SXSbY',title:'second',source:'search'}];await w.cycle();
+  const open=r.context.onCardClick(dialogEvent(r,'open-anonymous'));assert.match(JSON.stringify(open),/곡명 검색|검색할 곡명/);
+  const input=dialogEvent(r,'anonymous-search',{dialogEventType:'SUBMIT_DIALOG',common:{parameters:{command:'anonymous-search'},formInputs:{privateSong:{stringInputs:{value:['my song']}}}}});
+  assert.equal(r.context.onCardClick(input).actionResponse.dialogAction.actionStatus.statusCode,'OK');await w.cycle();
+  const result=r.context.onCardClick(dialogEvent(r,'open-private-result'));assert.match(JSON.stringify(result),/anonymous-select:2/);assert.equal(result.text,undefined);
+  const other=dialogEvent(r,'open-private-result');other.user={name:'users/other',type:'HUMAN'};assert.doesNotMatch(JSON.stringify(r.context.onCardClick(other)),/anonymous-select|second/);
+  const pick=dialogEvent(r,'anonymous-select:2',{dialogEventType:'SUBMIT_DIALOG'});assert.equal(r.context.onCardClick(pick).actionResponse.dialogAction.actionStatus.statusCode,'OK');r.context.onCardClick(pick);await w.cycle();assert.equal(e.state.queue.length,1);assert.equal(e.state.queue[0].videoId,'s7gef3SXSbY');
+});
+test('private search remains unavailable without configured key and expired results have no selection buttons', async () => {
+  const r=runtime(),w=worker(engine(r),r);await w.cycle();const input=dialogEvent(r,'anonymous-search',{dialogEventType:'SUBMIT_DIALOG',common:{parameters:{command:'anonymous-search'},formInputs:{privateSong:{stringInputs:{value:['song']}}}}});assert.equal(r.context.onCardClick(input).actionResponse.dialogAction.actionStatus.statusCode,'INVALID_ARGUMENT');assert.equal(JSON.parse(r.props.get('QUEUE') || '[]').length,0);
+  r.props.set('r_'+r.context.jbHash('spaces/test/users/test'),JSON.stringify({at:r.now()-300001,text:'1. old\n5분 이내에 선택 <번호>를 보내세요.'}));assert.doesNotMatch(JSON.stringify(r.context.onCardClick(dialogEvent(r,'open-private-result'))),/anonymous-select/);
+});
