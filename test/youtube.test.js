@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
 import { videoId, equalSecret } from '../src/util.js';
 import { YouTube } from '../src/youtube.js';
 
@@ -93,7 +94,7 @@ test('search real loopback HTTP handles provider errors and retries after malfor
 test('standalone search readiness check defaults to no network and never changes queue or prints keys', async t => {
   const {mkdtempSync,writeFileSync,readFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {spawnSync}=await import('node:child_process');
   const dir=mkdtempSync(join(tmpdir(),'jukebox-search-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));const file=join(dir,'config.json'),queue=join(dir,'state.json');writeFileSync(queue,'preserved');
-  const run=(args=[])=>spawnSync(process.execPath,[new URL('../bin/check-search.js',import.meta.url).pathname,...args],{env:{...process.env,JUKEBOX_CONFIG:file},encoding:'utf8',timeout:5000});
+  const run=(args=[])=>spawnSync(process.execPath,[fileURLToPath(new URL('../bin/check-search.js',import.meta.url)),...args],{env:{...process.env,JUKEBOX_CONFIG:file},encoding:'utf8',timeout:5000});
   writeFileSync(file,JSON.stringify({youtubeApiKey:''}));assert.equal(run().status,1);
   writeFileSync(file,JSON.stringify({youtubeApiKey:'never-print-this-secret'}));const ready=run();assert.equal(ready.status,0);assert.doesNotMatch(ready.stdout+ready.stderr,/never-print-this-secret/);
   const invalid=run(['--live']);assert.equal(invalid.status,1);assert.match(invalid.stderr,/QUERY/);assert.equal(readFileSync(queue,'utf8'),'preserved');
