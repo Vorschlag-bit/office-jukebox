@@ -240,3 +240,9 @@ test('queued requests preempt a verified manual selection once, preserving FIFO 
  const {adapter,send,calls}=adapterFixture(t),store=new MemoryStore(),engine=new Engine({store,youtube:{resolve:async q=>({videoId:track.videoId,title:q})},adapter});await engine.command({text:'추가 one'});await engine.command({text:'추가 two'});await engine.command({text:'추가 three'});send(11,'nowPlaying',{videoId:track.videoId,cpn:'original',state:1});await engine.chain;const ids=store.state.queue.map(x=>x.id),before=calls.filter(x=>x.name==='setPlaylist').length;
  send(12,'nowPlaying',{videoId:'aaaaaaaaaaa',cpn:'manual',state:1});await engine.chain;assert.equal(store.state.current.id,ids[0]);assert.equal(store.state.queue[0].id,ids[1]);assert.equal(store.state.history.at(-1).status,'tv_yielded');assert.equal(calls.filter(x=>x.name==='setPlaylist').length,before+1);send(13,'onStateChange',{cpn:'manual',state:0});await engine.chain;assert.equal(store.state.current.id,ids[0]);
 });
+
+test('manual return uses bounded observed seek position in setPlaylist and keeps HTTP acceptance unconfirmed',async t=>{
+ const {adapter,calls,send,events}=adapterFixture(t);await adapter.play({...track,resumePositionSeconds:123.5});assert.equal(calls.find(x=>x.name==='setPlaylist').params.currentTime,123.5);assert.equal(events.length,0);
+ send(11,'nowPlaying',{videoId:track.videoId,cpn:'live',state:1,currentTime:'124.5',duration:'3600'});assert.equal(events.find(x=>x.event==='position').positionSeconds,124.5);assert.equal(events.find(x=>x.event==='position').durationSeconds,3600);
+ assert.deepEqual(adapter.position({currentTime:'NaN',duration:-1}),{});assert.deepEqual(adapter.position({currentTime:Infinity,duration:604801}),{});await adapter.play({...track,resumePositionSeconds:Infinity});assert.equal(calls.filter(x=>x.name==='setPlaylist').at(-1).params.currentTime,0);
+});

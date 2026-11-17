@@ -187,7 +187,7 @@ export class LoungeAdapter {
         if (target.cpn) this.retiredCpns.add(target.cpn);
         if (this.retiredCpns.size > 64) this.retiredCpns.delete(this.retiredCpns.values().next().value);
         const observationSessionId = randomUUID();
-        this.emit('external', { verifiedObservation: true, observedVideoId: payload.videoId, observationSessionId, observedState: Number(payload.state) });
+        this.emit('external', { verifiedObservation: true, observedVideoId: payload.videoId, observationSessionId, observedState: Number(payload.state), ...this.position(payload) });
         this.target = { sessionId: observationSessionId, videoId: payload.videoId, afterAid: event.id - 1, epoch: this.client.epoch, previousCpn: null, cpn: payload.cpn, playing: false, finished: false, observing: true };
         this.handle(event); return;
       }
@@ -197,6 +197,8 @@ export class LoungeAdapter {
     } else if (event.name !== 'onStateChange') return;
     // onStateChange lacks videoId. Only a matching playback nonce may complete this request.
     if (!target.cpn || payload.cpn !== target.cpn || (payload.videoId && payload.videoId !== target.videoId)) return;
+    const progress = this.position(payload);
+    if (!target.adActive && Object.keys(progress).length) this.emit('position', { verifiedObservation: true, ...progress });
     const state = Number(payload.state);
     target.lastState = state; target.idleQuery = null;
     if (state === 1) { target.playing = true; target.liveEpoch = this.client.epoch; this.online = true; this.lastCpn = target.cpn; this.emit('playing', { verifiedObservation: true }); }
@@ -205,13 +207,17 @@ export class LoungeAdapter {
     else if (state === 3 && target.playing) this.emit('buffering');
     else if (state === 0 && target.playing && !target.finished) { target.finished = true; this.emit('ended', { verifiedObservation: true }); }
   }
+  position(payload) {
+    const value = key => (typeof payload[key] === 'string' || typeof payload[key] === 'number') && String(payload[key]).trim() !== '' && Number.isFinite(Number(payload[key])) && Number(payload[key]) >= 0 && Number(payload[key]) <= 604800 ? Number(payload[key]) : undefined;
+    return Object.fromEntries(Object.entries({positionSeconds: value('currentTime'), durationSeconds: value('duration')}).filter(([,value])=>value !== undefined));
+  }
   async play(track) {
     check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
     await this.client.connect();
     check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
     await this.disableAutoplay();
     this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, epoch: this.client.epoch, previousCpn: this.lastCpn, cpn: null, playing: false, finished: false };
-    const result = await this.client.command('setPlaylist', { videoId: track.videoId, videoIds: track.videoId, currentIndex: 0, currentTime: 0 });
+    const result = await this.client.command('setPlaylist', { videoId: track.videoId, videoIds: track.videoId, currentIndex: 0, currentTime: Number.isFinite(track.resumePositionSeconds) && track.resumePositionSeconds >= 0 && track.resumePositionSeconds <= 604800 ? track.resumePositionSeconds : 0 });
     this.startMonitoring();
     await this.disableAutoplay().catch(() => {});
     void this.requestStatus();

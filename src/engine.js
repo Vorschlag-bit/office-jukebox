@@ -51,9 +51,17 @@ export class Engine {
     const current = this.state.current;
     // Request-first policy: only actually observed, playing BGM/manual TV music
     // yields to queued requests. Recovery, error and pause never get overwritten.
-    if (['background', 'external_tv'].includes(current?.source) && current.observedPlaying && ['playing', 'buffering'].includes(current.status) && current.desiredState !== 'paused' && !this.state.paused && this.state.queue.length) this.archive(current.source === 'background' ? 'background_yielded' : 'tv_yielded');
+    if (['background', 'external_tv'].includes(current?.source) && current.observedPlaying && ['playing', 'buffering'].includes(current.status) && current.desiredState !== 'paused' && !this.state.paused && this.state.queue.length) {
+      if (current.source === 'external_tv') this.state.manualReturn = { id: current.id, videoId: current.videoId, title: current.title, source: 'external_tv', addedAt: this.now(), expiresAt: this.now() + 7 * 86400000, resumePositionSeconds: Number.isFinite(current.positionSeconds) && Number.isFinite(current.durationSeconds) && current.durationSeconds > current.positionSeconds ? current.positionSeconds : 0 };
+      this.archive(current.source === 'background' ? 'background_yielded' : 'tv_yielded');
+    }
     if (this.state.current || this.state.paused) { if (expired) this.store.save(); return; }
     let track = this.state.queue.shift();
+    if (!track && this.state.manualReturn && !this.state.backgroundSuppressed && this.adapter.type === 'lounge') {
+      const previous = this.state.manualReturn; this.state.manualReturn = null;
+      if (previous.expiresAt > this.now()) track = { ...previous, id: randomUUID(), addedAt: this.now(), expiresAt: this.now() + 7 * 86400000 };
+      else this.store.save();
+    }
     if (!track && this.background.enabled && !this.state.backgroundSuppressed && ['browser', 'lounge'].includes(this.adapter.type)) {
       track = { ...backgroundTrack(this.now(), this.state.backgroundIndex || 0), id: randomUUID(), addedAt: this.now(), expiresAt: this.now() + 7 * 86400000 };
       this.state.backgroundIndex = ((this.state.backgroundIndex || 0) + 1) % 1000000;
@@ -86,7 +94,7 @@ export class Engine {
         check(!this.perUserLimit || this.state.queue.filter(x => x.requestedBy === user).length < this.perUserLimit, 'USER_LIMIT', `한 사람은 대기곡을 ${this.perUserLimit}개까지 신청할 수 있습니다.`);
         this.state.queue.push({ ...song, id: randomUUID(), requestedBy: user, addedAt: this.now(), expiresAt: this.now() + this.queueTtlMs, requestSpace: space, requestThread: thread });
         this.state.backgroundSuppressed = false;
-        reply = `대기열에 담았어요: ${song.title}. ${this.state.current?.source === 'background' ? '자동 배경음악보다 우선해서 재생돼요.' : '현재 곡이 끝나면 순서대로 재생돼요.'}`;
+        reply = `대기열에 담았어요: ${song.title}. ${['background','external_tv'].includes(this.state.current?.source) ? '배경음악보다 우선해서 재생돼요.' : '현재 곡이 끝나면 순서대로 재생돼요.'}`;
       };
       const listCommand = ['목록', '재생목록', 'playlist'].includes(verb.toLowerCase());
       const plainPlaylist = ['재생', '추가', 'play', 'add'].includes(verb.toLowerCase()) && playlistId(arg) && new URL(arg).pathname === '/playlist';
@@ -169,7 +177,7 @@ export class Engine {
           await this.adapter.stop(); // On failure preserve state rather than falsely reporting stopped.
           const stop = ['정지', 'stop'].includes(verb.toLowerCase());
           this.archive(stop ? 'stopped' : 'skipped');
-          if (stop) this.state.queue = [];
+          if (stop) { this.state.queue = []; this.state.manualReturn = null; }
           if (stop) this.state.paused = false;
           if (stop) this.state.backgroundSuppressed = true;
           this.consecutiveFailures = 0;
@@ -236,20 +244,31 @@ export class Engine {
       return this.snapshot();
     });
   }
-  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, observedVideoId, observationSessionId, observedState }) {
+  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, observedVideoId, observationSessionId, observedState, positionSeconds, durationSeconds }) {
     return this.serial(async () => {
       if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId) return false;
+      if (event === 'position' && this.adapter.type === 'lounge' && verifiedObservation) {
+        const current = this.state.current;
+        if (current.source !== 'external_tv') return false;
+        let changed = false;
+        for (const [key,value] of Object.entries({positionSeconds,durationSeconds})) if (Number.isFinite(value) && value >= 0 && value <= 604800 && current[key] !== value) { current[key] = value; changed = true; }
+        if (changed) this.store.save(); return changed;
+      }
       if (event === 'external' && this.adapter.type === 'lounge' && verifiedObservation && /^[A-Za-z0-9_-]{11}$/.test(observedVideoId || '') && /^[a-f0-9-]{36}$/.test(observationSessionId || '') && [1,2,3].includes(observedState)) {
+        // A new TV selection replaces any earlier return intent. If requests
+        // remain, dispatch will save this latest selection as their return target.
+        this.state.manualReturn = null;
         this.notify('TV에서 수동으로 고른 영상을 따라갑니다. 기존 대기열은 유지됩니다.');
         this.archive('tv_replaced');
         const id = randomUUID();
-        this.state.current = { id, videoId: observedVideoId, title: `YouTube ${observedVideoId}`, source: 'external_tv', sessionId: observationSessionId, status: observedState === 1 ? 'playing' : observedState === 2 ? 'paused' : 'buffering', desiredState: observedState === 2 ? 'paused' : 'playing', observedPlaying: observedState === 1, addedAt: this.now(), expiresAt: this.now() + 7 * 86400000, controlVersion: 0 };
+        this.state.current = { id, videoId: observedVideoId, title: `YouTube ${observedVideoId}`, source: 'external_tv', sessionId: observationSessionId, status: observedState === 1 ? 'playing' : observedState === 2 ? 'paused' : 'buffering', desiredState: observedState === 2 ? 'paused' : 'playing', observedPlaying: observedState === 1, addedAt: this.now(), expiresAt: this.now() + 7 * 86400000, controlVersion: 0, ...(Number.isFinite(positionSeconds) && positionSeconds >= 0 && positionSeconds <= 604800 ? {positionSeconds} : {}), ...(Number.isFinite(durationSeconds) && durationSeconds >= 0 && durationSeconds <= 604800 ? {durationSeconds} : {}) };
         this.state.paused = observedState === 2;
         this.consecutiveFailures = 0; this.store.save();
         // Optional title lookup must not block events, controls or newer selections.
         if (typeof this.youtube.resolve === 'function') void Promise.resolve().then(() => this.youtube.resolve(`https://www.youtube.com/watch?v=${observedVideoId}`, false)).then(song => this.serial(async () => {
-          if (this.state.current?.id !== id || song?.videoId !== observedVideoId || typeof song.title !== 'string' || !song.title.trim()) return;
-          this.state.current.title = song.title.slice(0,300); this.store.save();
+          if (song?.videoId !== observedVideoId || typeof song.title !== 'string' || !song.title.trim()) return;
+          const track = this.state.current?.id === id ? this.state.current : this.state.manualReturn?.id === id ? this.state.manualReturn : null;
+          if (track) { track.title = song.title.slice(0,300); this.store.save(); }
         })).catch(() => {});
         if (observedState === 1) await this.dispatch();
         return true;
