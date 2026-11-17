@@ -11,6 +11,7 @@ function loadQueue() {
     if(s.adminTlsPort && ['localhost','127.0.0.1','[::1]','::1'].indexOf(window.location.hostname) < 0) { byId('shared-admin').href=window.location.hostname.endsWith('.local') ? '/' : 'https://'+window.location.hostname+':'+s.adminTlsPort+'/'; byId('shared-admin').textContent='HTTPS 관리자 로그인 ↗'; byId('shared-admin-help').hidden=false; }
     if(s.current){byId('shared-title').removeAttribute('data-tone-key');byId('shared-title').textContent=s.current.title;}else queueTone('shared-title','firstSong','첫 신청곡을 기다립니다.');
     queueTone('shared-status',s.current ? (statuses[s.current.status]?s.current.status:'unknown') : s.paused?'queuePaused':'idle','재생 상태 확인 중');
+    byId('shared-follow').hidden=!(s.current && s.current.source==='external_tv');
     byId('shared-art').setAttribute('data-idle',String(!s.current));
     byId('shared-art').src = s.current ? 'https://i.ytimg.com/vi/'+encodeURIComponent(s.current.videoId)+'/mqdefault.jpg' : window.MusicTheme.current().art;
     byId('share-url').value=s.shareUrl || window.location.href;

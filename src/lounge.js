@@ -124,7 +124,7 @@ export class LoungeAdapter {
   type = 'lounge';
   constructor(config, dependencies = {}) {
     check(config.experimental === true, 'LOUNGE_OPT_IN', 'TV 코드 제어는 비공식 프로토콜입니다. 안내를 확인하고 experimental을 켜세요.');
-    this.config = config; this.listener = () => {}; this.target = null; this.lastCpn = null; this.online = false;
+    this.config = config; this.listener = () => {}; this.target = null; this.lastCpn = null; this.online = false; this.retiredCpns = new Set();
     this.autoplayMode = 'UNKNOWN'; this.policyError = null; this.statusQueries = 0;
     this.client = dependencies.client || new LoungeClient(config, { ...dependencies, onEvent: event => this.handle(event) });
     this.client.onEvent = event => this.handle(event);
@@ -182,7 +182,16 @@ export class LoungeAdapter {
         return;
       }
       target.idleQuery = null;
-      if (payload.videoId && payload.videoId !== target.videoId && target.playing) { this.emit('external'); return; }
+      if (/^[A-Za-z0-9_-]{11}$/.test(payload.videoId || '') && typeof payload.cpn === 'string' && payload.cpn.length > 0 && payload.cpn.length <= 256 && !this.retiredCpns.has(payload.cpn) && [1,2,3].includes(Number(payload.state)) && (target.playing || target.observing) && (payload.videoId !== target.videoId || target.cpn && payload.cpn !== target.cpn)) {
+        // Rebase observation only. Never play, seek or consume a queued request.
+        if (target.cpn) this.retiredCpns.add(target.cpn);
+        if (this.retiredCpns.size > 64) this.retiredCpns.delete(this.retiredCpns.values().next().value);
+        const observationSessionId = randomUUID();
+        this.emit('external', { verifiedObservation: true, observedVideoId: payload.videoId, observationSessionId, observedState: Number(payload.state) });
+        this.target = { sessionId: observationSessionId, videoId: payload.videoId, afterAid: event.id - 1, epoch: this.client.epoch, previousCpn: null, cpn: payload.cpn, playing: false, finished: false, observing: true };
+        this.handle(event); return;
+      }
+      if (payload.cpn && this.retiredCpns.has(payload.cpn)) return;
       if (payload.videoId !== target.videoId || !payload.cpn || payload.cpn === target.previousCpn) return;
       target.cpn = String(payload.cpn);
     } else if (event.name !== 'onStateChange') return;

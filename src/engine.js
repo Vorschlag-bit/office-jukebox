@@ -49,9 +49,9 @@ export class Engine {
     const expired = this.expire();
     if (this.adapter.type === 'browser' && (!this.player || this.now() - this.player.lastSeen >= 15000)) { if (expired) this.store.save(); return; }
     const current = this.state.current;
-    // Only our actually observed background playback can yield automatically.
-    // An external TV selection, recovery, error or pause never gets overwritten.
-    if (current?.source === 'background' && current.observedPlaying && ['playing', 'buffering'].includes(current.status) && current.desiredState !== 'paused' && !this.state.paused && this.state.queue.length) this.archive('background_yielded');
+    // Request-first policy: only actually observed, playing BGM/manual TV music
+    // yields to queued requests. Recovery, error and pause never get overwritten.
+    if (['background', 'external_tv'].includes(current?.source) && current.observedPlaying && ['playing', 'buffering'].includes(current.status) && current.desiredState !== 'paused' && !this.state.paused && this.state.queue.length) this.archive(current.source === 'background' ? 'background_yielded' : 'tv_yielded');
     if (this.state.current || this.state.paused) { if (expired) this.store.save(); return; }
     let track = this.state.queue.shift();
     if (!track && this.background.enabled && !this.state.backgroundSuppressed && ['browser', 'lounge'].includes(this.adapter.type)) {
@@ -219,7 +219,7 @@ export class Engine {
         this.consecutiveFailures = 0;
         current.observedPlaying = true;
         if (!current.notifiedPlaying) { this.notify(`재생 중: ${current.title}`); current.notifiedPlaying = true; }
-        if (current.source === 'background' && this.state.queue.length) await this.dispatch();
+        if (['background','external_tv'].includes(current.source) && this.state.queue.length) await this.dispatch();
       }
       if (event === 'error') { current.error = errorCode ? `YOUTUBE_${Number(errorCode)}` : 'PLAYER_ERROR'; this.notify(`재생 오류: ${current.title} [${current.error}]`); }
     }
@@ -236,9 +236,25 @@ export class Engine {
       return this.snapshot();
     });
   }
-  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false }) {
+  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, observedVideoId, observationSessionId, observedState }) {
     return this.serial(async () => {
-      if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId || this.state.current.status === 'error') return false;
+      if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId) return false;
+      if (event === 'external' && this.adapter.type === 'lounge' && verifiedObservation && /^[A-Za-z0-9_-]{11}$/.test(observedVideoId || '') && /^[a-f0-9-]{36}$/.test(observationSessionId || '') && [1,2,3].includes(observedState)) {
+        this.notify('TV에서 수동으로 고른 영상을 따라갑니다. 기존 대기열은 유지됩니다.');
+        this.archive('tv_replaced');
+        const id = randomUUID();
+        this.state.current = { id, videoId: observedVideoId, title: `YouTube ${observedVideoId}`, source: 'external_tv', sessionId: observationSessionId, status: observedState === 1 ? 'playing' : observedState === 2 ? 'paused' : 'buffering', desiredState: observedState === 2 ? 'paused' : 'playing', observedPlaying: observedState === 1, addedAt: this.now(), expiresAt: this.now() + 7 * 86400000, controlVersion: 0 };
+        this.state.paused = observedState === 2;
+        this.consecutiveFailures = 0; this.store.save();
+        // Optional title lookup must not block events, controls or newer selections.
+        if (typeof this.youtube.resolve === 'function') void Promise.resolve().then(() => this.youtube.resolve(`https://www.youtube.com/watch?v=${observedVideoId}`, false)).then(song => this.serial(async () => {
+          if (this.state.current?.id !== id || song?.videoId !== observedVideoId || typeof song.title !== 'string' || !song.title.trim()) return;
+          this.state.current.title = song.title.slice(0,300); this.store.save();
+        })).catch(() => {});
+        if (observedState === 1) await this.dispatch();
+        return true;
+      }
+      if (this.state.current.status === 'error') return false;
       if (this.state.current.status === 'recovery_required' && !(this.adapter.type === 'lounge' && verifiedObservation && ['playing', 'paused', 'ended'].includes(event))) return false;
       if (event === 'idle' && this.adapter.type === 'lounge' && verifiedObservation && this.state.current.observedPlaying && !this.state.paused && this.state.current.desiredState !== 'paused') {
         // Receiver explicitly cleared its item twice. Preserve the distinction
@@ -247,6 +263,7 @@ export class Engine {
       }
       if (event === 'offline' || event === 'external') { this.state.current.status = 'recovery_required'; this.notify(event === 'external' ? 'TV에서 다른 영상으로 변경됐습니다. 대기열을 진행하려면 재시도 또는 다음을 선택하세요.' : '기기 연결이 끊겼습니다. 실제 재생을 확인한 뒤 재시도 또는 다음을 선택하세요.'); this.store.save(); return true; }
       if (!['playing', 'paused', 'ended', 'buffering'].includes(event)) return false;
+      if (this.state.current.source === 'external_tv' && verifiedObservation && ['playing','paused'].includes(event)) { this.state.paused = event === 'paused'; this.state.current.desiredState = event === 'paused' ? 'paused' : 'playing'; }
       await this.applyPlayback(event); return true;
     });
   }

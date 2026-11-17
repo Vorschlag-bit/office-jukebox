@@ -78,7 +78,7 @@ export function createServer({ engine, config, diagnostics = () => ({}), tls }) 
       if (url.pathname === '/api/public/queue') check(config.lan?.enabled === true, 'NOT_FOUND', '공유 플리가 꺼져 있습니다.', 404);
       if (req.method === 'GET' && url.pathname === '/api/public/queue') {
         const state = engine.snapshot();
-        const song = x => x ? { title: x.title, videoId: x.videoId, status: x.status } : null;
+        const song = x => x ? { title: x.title, videoId: x.videoId, status: x.status, source: x.source } : null;
         return send(200, { current: song(state.current), queue: state.queue.map(song), paused: state.paused, adminTlsPort: config.tls?.enabled ? config.tls.port : null, shareUrl: publicQueueUrl(config), requestsEnabled:requests.enabled(), searchEnabled:requests.enabled()&&!!engine.youtube.key });
       }
       const player = url.pathname.startsWith('/api/player/');

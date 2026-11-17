@@ -113,7 +113,7 @@ test('Lounge remains opt-in; no full computer or local network discovery is requ
 test('manual change on TV reports external control instead of silently hijacking playback', async t => {
   const { adapter, send, events } = adapterFixture(t); await adapter.play(track);
   send(11, 'nowPlaying', { videoId: track.videoId, cpn: 'cpn', state: 1 });
-  send(12, 'nowPlaying', { videoId: 'aaaaaaaaaaa', cpn: 'external-cpn', state: 1 }); assert.equal(events.at(-1).event, 'external');
+  send(12, 'nowPlaying', { videoId: 'aaaaaaaaaaa', cpn: 'external-cpn', state: 1 }); assert.equal(events.at(-2).event, 'external'); assert.equal(events.at(-2).observedVideoId, 'aaaaaaaaaaa'); assert.equal(events.at(-1).event, 'playing'); assert.equal(adapter.target.videoId, 'aaaaaaaaaaa');
 });
 test('old streaming connection cannot corrupt AID of a freshly reconnected session', async () => {
   let deliver;
@@ -174,7 +174,7 @@ test('restart attaches to existing TV playback without replay, retaining queued 
   const second=adapterFixture(t),restored=new Engine({store,youtube:{},adapter:second.adapter});
   assert.equal(store.state.current.status,'recovery_required');await restored.start();
   assert.equal(second.calls.some(x=>['setPlaylist','play','seekTo'].includes(x.name)),false);
-  second.send(11,'nowPlaying',{videoId:'aaaaaaaaaaa',cpn:'other',state:1});await restored.chain;assert.equal(store.state.current.status,'recovery_required');
+  second.send(11,'nowPlaying',{videoId:track.videoId,state:1});await restored.chain;assert.equal(store.state.current.status,'recovery_required');
   second.send(12,'nowPlaying',{videoId:track.videoId,cpn:'existing-live',state:1});await restored.chain;
   assert.equal(store.state.current.status,'playing');assert.equal(store.state.current.sessionId,session);assert.deepEqual(store.state.queue.map(x=>x.id),ids);
   second.send(13,'onStateChange',{cpn:'existing-live',state:0});await restored.chain;assert.equal(store.state.current.id,ids[0]);assert.equal(store.state.queue[0].id,ids[1]);
@@ -205,4 +205,38 @@ test('verified receiver idle advances queued item without pretending it was a no
   send(11,'nowPlaying',{videoId:track.videoId,cpn:'first',state:1});await engine.chain;
   send(12,'nowPlaying',{});await adapter.requestStatus();send(13,'nowPlaying',{});await engine.chain;
   assert.equal(store.state.current.id,next);assert.equal(store.state.history[0].status,'tv_idle');
+});
+
+test('TV manual selections follow verified video+nonce, ignore retired sessions and yield to queued requests after actual playback', async t => {
+  const {adapter,send,calls}=adapterFixture(t),store=new MemoryStore();
+  const youtube={resolve:async q=>({videoId:q.includes('aaaaaaaaaaa')?'aaaaaaaaaaa':q.includes('bbbbbbbbbbb')?'bbbbbbbbbbb':track.videoId,title:q})};
+  const engine=new Engine({store,youtube,adapter});await engine.command({text:'추가 one'});
+  send(11,'nowPlaying',{videoId:track.videoId,cpn:'original',state:1});await engine.chain;
+  let ids=store.state.queue.map(x=>x.id);const before=calls.filter(x=>x.name==='setPlaylist').length;
+  send(12,'nowPlaying',{videoId:'aaaaaaaaaaa',state:1});await engine.chain;assert.equal(store.state.current.videoId,track.videoId);
+  send(13,'nowPlaying',{videoId:'aaaaaaaaaaa',cpn:'manual-a',state:1});await engine.chain;
+  assert.equal(store.state.current.source,'external_tv');assert.equal(store.state.current.videoId,'aaaaaaaaaaa');assert.equal(store.state.current.status,'playing');assert.deepEqual(store.state.queue.map(x=>x.id),ids);assert.equal(calls.filter(x=>x.name==='setPlaylist').length,before);
+  send(14,'onStateChange',{cpn:'original',state:0});send(15,'nowPlaying',{videoId:track.videoId,cpn:'original',state:1});await engine.chain;assert.equal(store.state.current.videoId,'aaaaaaaaaaa');
+  send(16,'nowPlaying',{videoId:'bbbbbbbbbbb',cpn:'manual-b',state:3});await engine.chain;assert.equal(store.state.current.status,'buffering');assert.equal(store.state.current.observedPlaying,false);
+  send(17,'onStateChange',{cpn:'manual-a',state:0});await engine.chain;assert.equal(store.state.current.videoId,'bbbbbbbbbbb');
+  await engine.command({text:'추가 two'});await engine.command({text:'추가 three'});ids=store.state.queue.map(x=>x.id);assert.equal(ids.length,2);
+  send(18,'onStateChange',{cpn:'manual-b',state:1});send(19,'onStateChange',{cpn:'manual-b',state:0});await engine.chain;
+  assert.equal(store.state.current.id,ids[0]);assert.equal(store.state.queue[0].id,ids[1]);assert.equal(calls.filter(x=>x.name==='setPlaylist').length,before+1);
+});
+test('restart with a different paused TV selection observes without replay and yields to requests after actual resume', async t=>{
+ const first=adapterFixture(t),store=new MemoryStore(),youtube={resolve:async q=>({videoId:track.videoId,title:q})};const old=new Engine({store,youtube,adapter:first.adapter});await old.command({text:'추가 one'});await old.command({text:'추가 two'});first.adapter.close();
+ const {adapter,send,calls}=adapterFixture(t),engine=new Engine({store,youtube:{},adapter});const queued=store.state.queue[0].id;await engine.start();send(11,'nowPlaying',{videoId:'aaaaaaaaaaa',cpn:'manual',state:2});await engine.chain;
+ assert.equal(store.state.current.source,'external_tv');assert.equal(store.state.current.status,'paused');assert.equal(store.state.paused,true);assert.equal(calls.some(x=>['setPlaylist','play','seekTo'].includes(x.name)),false);
+ send(12,'onStateChange',{cpn:'manual',state:0});await engine.chain;assert.equal(store.state.queue[0].id,queued);
+ send(13,'onStateChange',{cpn:'manual',state:1});await engine.chain;assert.equal(store.state.paused,false);assert.equal(store.state.current.id,queued);const session=store.state.current.sessionId;send(14,'onStateChange',{cpn:'manual',state:0});await engine.chain;assert.equal(store.state.current.sessionId,session);
+});
+test('external title lookups cannot overwrite a newer TV selection or block queue observation',async t=>{
+ const {adapter,send}=adapterFixture(t),store=new MemoryStore();let finish;const engine=new Engine({store,youtube:{resolve:async()=>({videoId:track.videoId,title:'initial'})},adapter});await engine.command({text:'추가 one'});send(11,'nowPlaying',{videoId:track.videoId,cpn:'initial',state:1});await engine.chain;
+ engine.youtube.resolve=q=>q.includes('aaaaaaaaaaa')?new Promise(r=>{finish=r}):Promise.resolve({videoId:'bbbbbbbbbbb',title:'newest title'});
+ send(12,'nowPlaying',{videoId:'aaaaaaaaaaa',cpn:'a',state:1});await engine.chain;send(13,'nowPlaying',{videoId:'bbbbbbbbbbb',cpn:'b',state:1});await engine.chain;await new Promise(r=>setImmediate(r));await engine.chain;finish({videoId:'aaaaaaaaaaa',title:'stale title'});await new Promise(r=>setImmediate(r));await engine.chain;assert.equal(store.state.current.videoId,'bbbbbbbbbbb');assert.equal(store.state.current.title,'newest title');
+});
+
+test('queued requests preempt a verified manual selection once, preserving FIFO and ignoring the replaced song ending',async t=>{
+ const {adapter,send,calls}=adapterFixture(t),store=new MemoryStore(),engine=new Engine({store,youtube:{resolve:async q=>({videoId:track.videoId,title:q})},adapter});await engine.command({text:'추가 one'});await engine.command({text:'추가 two'});await engine.command({text:'추가 three'});send(11,'nowPlaying',{videoId:track.videoId,cpn:'original',state:1});await engine.chain;const ids=store.state.queue.map(x=>x.id),before=calls.filter(x=>x.name==='setPlaylist').length;
+ send(12,'nowPlaying',{videoId:'aaaaaaaaaaa',cpn:'manual',state:1});await engine.chain;assert.equal(store.state.current.id,ids[0]);assert.equal(store.state.queue[0].id,ids[1]);assert.equal(store.state.history.at(-1).status,'tv_yielded');assert.equal(calls.filter(x=>x.name==='setPlaylist').length,before+1);send(13,'onStateChange',{cpn:'manual',state:0});await engine.chain;assert.equal(store.state.current.id,ids[0]);
 });

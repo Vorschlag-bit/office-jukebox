@@ -21,7 +21,7 @@ function refresh() {
     el('current-art').setAttribute('data-idle',String(!s.current)); el('current-art').src = artwork(s.current && s.current.videoId);
     var recovering = s.current && ['error','recovery_required'].indexOf(s.current.status) >= 0;
     el('playback-status').textContent = s.current ? names[s.current.status] || s.current.status : s.paused ? '잠시 쉬는 중' : '대기 중';
-    var bodyTone=s.current && s.current.source==='background' && s.current.status==='playing' ? 'bgm' : s.current ? s.current.status==='blocked'?'blockedBody':s.current.status==='recovery_required'?'recoveryBody':s.current.status==='error'?'errorBody':s.current.status==='paused'?'pausedBody':['sent_unconfirmed','dispatching'].indexOf(s.current.status)>=0?s.current.status:'nextBody' : s.paused?'pausedBody':'invite';
+    var bodyTone=s.current && s.current.source==='background' && s.current.status==='playing' ? 'bgm' : s.current && s.current.source==='external_tv' && s.current.status==='playing' ? 'externalBody' : s.current ? s.current.status==='blocked'?'blockedBody':s.current.status==='recovery_required'?'recoveryBody':s.current.status==='error'?'errorBody':s.current.status==='paused'?'pausedBody':['sent_unconfirmed','dispatching'].indexOf(s.current.status)>=0?s.current.status:'nextBody' : s.paused?'pausedBody':'invite';
     setTone('status',bodyTone,'재생 상태를 확인해 주세요.');
     el('recovery').hidden = !recovering; el('recovery-message').textContent = s.current && s.current.error ? '재생 오류: ' + s.current.error : '자동으로 다시 재생하지 않았어요.';
     var paused = s.paused || (s.current && s.current.status === 'paused');
