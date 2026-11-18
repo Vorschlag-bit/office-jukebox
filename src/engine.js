@@ -273,7 +273,8 @@ export class Engine {
         if (observedState === 1) await this.dispatch();
         return true;
       }
-      if (this.state.current.status === 'error') return false;
+      if (this.state.current.status === 'error' && !(this.state.current.error === 'PLAYBACK_NOT_CONFIRMED' && this.adapter.type === 'lounge' && verifiedObservation && ['playing','paused'].includes(event))) return false;
+      if (this.state.current.error === 'PLAYBACK_NOT_CONFIRMED' && verifiedObservation && ['playing','paused'].includes(event)) delete this.state.current.error;
       if (this.state.current.status === 'recovery_required' && !(this.adapter.type === 'lounge' && verifiedObservation && ['playing', 'paused', 'ended'].includes(event))) return false;
       if (event === 'idle' && this.adapter.type === 'lounge' && verifiedObservation && this.state.current.observedPlaying && !this.state.paused && this.state.current.desiredState !== 'paused') {
         // Receiver explicitly cleared its item twice. Preserve the distinction

@@ -246,3 +246,9 @@ test('manual return uses bounded observed seek position in setPlaylist and keeps
  send(11,'nowPlaying',{videoId:track.videoId,cpn:'live',state:1,currentTime:'124.5',duration:'3600'});assert.equal(events.find(x=>x.event==='position').positionSeconds,124.5);assert.equal(events.find(x=>x.event==='position').durationSeconds,3600);
  assert.deepEqual(adapter.position({currentTime:'NaN',duration:-1}),{});assert.deepEqual(adapter.position({currentTime:Infinity,duration:604801}),{});await adapter.play({...track,resumePositionSeconds:Infinity});assert.equal(calls.filter(x=>x.name==='setPlaylist').at(-1).params.currentTime,0);
 });
+
+test('late verified TV playback recovers handshake timeout without replay or accepting stale/unverified events',async t=>{
+ const {adapter,send,calls}=adapterFixture(t),store=new MemoryStore(),engine=new Engine({store,youtube:{resolve:async q=>({videoId:track.videoId,title:q})},adapter});await engine.command({text:'추가 one'});engine.state.current.status='error';engine.state.current.error='PLAYBACK_NOT_CONFIRMED';const count=calls.filter(x=>x.name==='setPlaylist').length;
+ await engine.nativeEvent({...engine.state.current,event:'playing'});assert.equal(engine.state.current.status,'error');await engine.nativeEvent({...engine.state.current,sessionId:'stale',event:'playing',verifiedObservation:true});assert.equal(engine.state.current.status,'error');send(11,'nowPlaying',{videoId:track.videoId,cpn:'late',state:1});await engine.chain;assert.equal(engine.state.current.status,'playing');assert.equal(engine.state.current.error,undefined);assert.equal(calls.filter(x=>x.name==='setPlaylist').length,count);
+ engine.state.current.status='error';engine.state.current.error='DEVICE_ERROR';send(12,'nowPlaying',{videoId:track.videoId,cpn:'late',state:1});await engine.chain;assert.equal(engine.state.current.status,'error');
+});
