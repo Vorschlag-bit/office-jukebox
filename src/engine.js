@@ -51,7 +51,7 @@ export class Engine {
     const current = this.state.current;
     // Request-first policy: only actually observed, playing BGM/manual TV music
     // yields to queued requests. Recovery, error and pause never get overwritten.
-    if (['background', 'external_tv'].includes(current?.source) && current.observedPlaying && ['playing', 'buffering'].includes(current.status) && current.desiredState !== 'paused' && !this.state.paused && this.state.queue.length) {
+    if (['background', 'external_tv'].includes(current?.source) && (current.observedPlaying || current.source === 'external_tv' && current.confirmation === 'identity-only') && ['playing', 'buffering', 'observing'].includes(current.status) && current.desiredState !== 'paused' && !this.state.paused && this.state.queue.length) {
       if (current.source === 'external_tv') this.state.manualReturn = { id: current.id, videoId: current.videoId, title: current.title, source: 'external_tv', addedAt: this.now(), expiresAt: this.now() + 7 * 86400000, resumePositionSeconds: Number.isFinite(current.positionSeconds) && Number.isFinite(current.durationSeconds) && current.durationSeconds > current.positionSeconds ? current.positionSeconds : 0 };
       this.archive(current.source === 'background' ? 'background_yielded' : 'tv_yielded');
     }
@@ -226,6 +226,7 @@ export class Engine {
       if (event === 'playing') {
         this.consecutiveFailures = 0;
         current.observedPlaying = true;
+        if (current.confirmation === 'identity-only') delete current.confirmation;
         if (!current.notifiedPlaying) { this.notify(`재생 중: ${current.title}`); current.notifiedPlaying = true; }
         if (['background','external_tv'].includes(current.source) && this.state.queue.length) await this.dispatch();
       }
@@ -247,6 +248,15 @@ export class Engine {
   async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, observedVideoId, observationSessionId, observedState, positionSeconds, durationSeconds }) {
     return this.serial(async () => {
       if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId) return false;
+      if (event === 'identity' && this.adapter.type === 'lounge' && /^[A-Za-z0-9_-]{11}$/.test(observedVideoId || '') && /^[a-f0-9-]{36}$/.test(observationSessionId || '')) {
+        this.state.manualReturn = null; this.archive('tv_identity_changed');
+        const id = randomUUID();
+        this.state.current = {id, videoId: observedVideoId, title: `YouTube ${observedVideoId}`, source: 'external_tv', sessionId: observationSessionId, status: 'observing', confirmation: 'identity-only', observedPlaying: false, desiredState: 'playing', controlVersion: 0, addedAt: this.now(), expiresAt: this.now() + 7 * 86400000};
+        this.store.save();
+        if (typeof this.youtube.resolve === 'function') void Promise.resolve().then(()=>this.youtube.resolve(`https://www.youtube.com/watch?v=${observedVideoId}`,false)).then(song=>this.serial(async()=>{if(this.state.current?.id===id && song?.videoId===observedVideoId && typeof song.title==='string'){this.state.current.title=song.title.slice(0,300);this.store.save();}})).catch(()=>{});
+        // Display reconciliation alone must never launch or consume a request.
+        return true;
+      }
       if (event === 'position' && this.adapter.type === 'lounge' && verifiedObservation) {
         const current = this.state.current;
         if (current.source !== 'external_tv') return false;

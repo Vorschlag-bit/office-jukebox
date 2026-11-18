@@ -125,13 +125,13 @@ export class LoungeAdapter {
   constructor(config, dependencies = {}) {
     check(config.experimental === true, 'LOUNGE_OPT_IN', 'TV 코드 제어는 비공식 프로토콜입니다. 안내를 확인하고 experimental을 켜세요.');
     this.config = config; this.listener = () => {}; this.target = null; this.lastCpn = null; this.online = false; this.retiredCpns = new Set();
-    this.autoplayMode = 'UNKNOWN'; this.policyError = null; this.statusQueries = 0;
+    this.autoplayMode = 'UNKNOWN'; this.policyError = null; this.statusQueries = 0; this.identityQueries = 0; this.identityCandidate = null; this.identityConflict = null; this.staleVideoIds = new Set();
     this.client = dependencies.client || new LoungeClient(config, { ...dependencies, onEvent: event => this.handle(event) });
     this.client.onEvent = event => this.handle(event);
     this.controller = new AbortController();
   }
   setListener(listener) { this.listener = listener; }
-  info() { return { type: this.type, nativeApp: true, automaticQueue: true, verification: 'video-id-and-playback-nonce', experimental: true, online: this.online, autoplayMode: this.autoplayMode, policyError: this.policyError, statusQueries: this.statusQueries }; }
+  info() { return { type: this.type, nativeApp: true, automaticQueue: true, verification: 'video-id-and-playback-nonce', experimental: true, online: this.online, autoplayMode: this.autoplayMode, policyError: this.policyError, statusQueries: this.statusQueries, identityConflict: !!this.identityConflict, identitySource: this.identityConflict ? 'queried-subtitles-track' : 'now-playing' }; }
   emit(event, extra = {}) { if (this.target) this.listener({ sessionId: this.target.sessionId, videoId: this.target.videoId, event, ...extra }); }
   async disableAutoplay() {
     if (this.autoplayRequest) return this.autoplayRequest;
@@ -149,14 +149,14 @@ export class LoungeAdapter {
     if (this.statusRequest) return this.statusRequest;
     if (!this.target || this.controller.signal.aborted) return;
     this.statusQueries++;
-    this.statusRequest = this.client.command('getNowPlaying').catch(() => {}).finally(() => { this.statusRequest = null; });
+    this.statusRequest = (async () => { if (this.statusQueries % 3 === 1) { this.identityQueries++; await this.client.command('getSubtitlesTrack'); } await this.client.command('getNowPlaying'); })().catch(() => {}).finally(() => { this.statusRequest = null; });
     return this.statusRequest;
   }
   handle(event) {
     if (this.controller.signal.aborted) return;
     if (event.name === 'onAutoplayModeChanged') {
       this.autoplayMode = event.args[0]?.autoplayMode === 'DISABLED' ? 'DISABLED' : event.args[0]?.autoplayMode === 'ENABLED' ? 'ENABLED' : 'UNKNOWN';
-      if (this.autoplayMode === 'ENABLED' && this.target) void this.disableAutoplay().catch(() => {});
+      if (this.autoplayMode === 'ENABLED' && this.target && !this.target.observing && !this.identityConflict) void this.disableAutoplay().catch(() => {});
       return;
     }
     if (event.name === 'loungeScreenDisconnected') { this.online = false; this.emit('offline'); this.client.sid = null; return; }
@@ -165,11 +165,32 @@ export class LoungeAdapter {
     // already fenced by LoungeClient. Do not discard the new session forever.
     if (target && target.epoch !== this.client.epoch) { target.epoch = this.client.epoch; target.afterAid = -1; target.idleQuery = null; target.liveEpoch = null; }
     if (!target || !payload || typeof payload !== 'object' || event.id <= target.afterAid) return;
+    if (event.name === 'onSubtitlesTrackChanged') {
+      const video = payload.videoId;
+      if (!this.identityQueries || !/^[A-Za-z0-9_-]{11}$/.test(video || '') || target.adActive) return;
+      let hint = this.identityCandidate;
+      if (!hint || hint.videoId !== video || hint.epoch !== this.client.epoch) hint = {videoId: video, epoch: this.client.epoch, query: this.identityQueries, confirmations: 1};
+      else if (hint.query !== this.identityQueries) { hint.query = this.identityQueries; hint.confirmations++; }
+      this.identityCandidate = hint;
+      if (hint.confirmations < 2 || video === target.videoId) return;
+      // A receiver may retain a stale nowPlaying item while its explicitly
+      // queried subtitle context follows the visible video. Identity only:
+      // never reuse the other video's clock, nonce, end or playing state.
+      const observationSessionId = randomUUID();
+      this.staleVideoIds.add(target.videoId);
+      if(this.staleVideoIds.size>16)this.staleVideoIds.delete(this.staleVideoIds.values().next().value);
+      this.identityConflict = {staleVideoId: target.videoId, visibleVideoId: video};
+      this.emit('identity', {observedVideoId: video, observationSessionId});
+      this.target = {sessionId: observationSessionId, videoId: video, afterAid: event.id, epoch: this.client.epoch, previousCpn: null, cpn: null, playing: false, finished: false, observing: true};
+      return;
+    }
     if (event.name === 'adPlaying' || event.name === 'onAdStateChange') {
       const state = Number(payload.adState);
       target.adActive = ![0, -1].includes(state); target.idleQuery = null; return;
     }
     if (event.name === 'nowPlaying') {
+      if (this.identityConflict && payload.videoId !== target.videoId && (!payload.videoId || this.staleVideoIds.has(payload.videoId))) return;
+      if (this.identityConflict && payload.videoId === target.videoId && payload.cpn) this.identityConflict = null;
       // Some receivers clear the item completely at its end: nowPlaying {}.
       // Confirm that actual idle snapshot on a later explicit query, after this
       // session observed playback. Never use duration/elapsed time as an end.
@@ -191,7 +212,7 @@ export class LoungeAdapter {
         this.target = { sessionId: observationSessionId, videoId: payload.videoId, afterAid: event.id - 1, epoch: this.client.epoch, previousCpn: null, cpn: payload.cpn, playing: false, finished: false, observing: true };
         this.handle(event); return;
       }
-      if (payload.cpn && this.retiredCpns.has(payload.cpn)) return;
+      if (payload.cpn && this.retiredCpns.has(payload.cpn) && payload.videoId !== target.videoId) return;
       if (payload.videoId !== target.videoId || !payload.cpn || payload.cpn === target.previousCpn) return;
       target.cpn = String(payload.cpn);
     } else if (event.name !== 'onStateChange') return;
@@ -216,6 +237,7 @@ export class LoungeAdapter {
     await this.client.connect();
     check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
     await this.disableAutoplay();
+    this.identityConflict = null; this.identityCandidate = null;
     this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, epoch: this.client.epoch, previousCpn: this.lastCpn, cpn: null, playing: false, finished: false };
     const result = await this.client.command('setPlaylist', { videoId: track.videoId, videoIds: track.videoId, currentIndex: 0, currentTime: Number.isFinite(track.resumePositionSeconds) && track.resumePositionSeconds >= 0 && track.resumePositionSeconds <= 604800 ? track.resumePositionSeconds : 0 });
     this.startMonitoring();
@@ -229,7 +251,6 @@ export class LoungeAdapter {
     // Observe the already-playing item after restart; never issue play/seek here.
     this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, epoch: this.client.epoch, previousCpn: null, cpn: null, playing: false, finished: false, observing: true };
     this.startMonitoring();
-    await this.disableAutoplay().catch(() => {});
     await this.requestStatus();
   }
   async monitor() {

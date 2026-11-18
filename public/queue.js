@@ -1,7 +1,7 @@
 'use strict';
 var activeRequest = false, stopped = false;
 function byId(id) { return document.getElementById(id); }
-var statuses = {playing:'♪ 지금 재생 중!',paused:'후운~ 잠깐 쉬는 중',sent_unconfirmed:'푸루… TV 재생 확인 중',dispatching:'푸루… 다음 곡 준비 중',recovery_required:'재생 상태를 확인하고 있어. 운영자를 불러 줘!',error:'후와~앙… 재생 확인이 필요해',blocked:'재생 허용을 기다리는 중'};
+var statuses = {observing:'TV 영상 확인됨 · 재생 상태 확인 중',playing:'♪ 지금 재생 중!',paused:'후운~ 잠깐 쉬는 중',sent_unconfirmed:'푸루… TV 재생 확인 중',dispatching:'푸루… 다음 곡 준비 중',recovery_required:'재생 상태를 확인하고 있어. 운영자를 불러 줘!',error:'후와~앙… 재생 확인이 필요해',blocked:'재생 허용을 기다리는 중'};
 function queueTone(id,key,fallback) { window.MusicTheme.bind(id,key,fallback); }
 function loadQueue() {
   if(activeRequest || stopped) return;

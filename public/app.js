@@ -11,7 +11,7 @@ var voiceSequence = 0;
 function setTone(id,key,fallback) { if(window.MusicTheme) window.MusicTheme.bind(id,key,fallback); else el(id).textContent=fallback; }
 function feedback(text, error) { var raw=(error ? '오류: ' : '')+text, seed='web-'+(++voiceSequence); if(window.MusicTheme) window.MusicTheme.feedback(raw,seed,error); else el('feedback').textContent=UsagiVoice.say(raw,seed); el('feedback').className=error?'feedback error':'feedback success'; }
 function connection(ok) { setTone('connection',ok?'connected':'disconnected',ok?'푸루! 음악방 연결됨':'후웅? 서버에 다시 연결하는 중'); el('connection-dot').className = 'connection-dot' + (ok ? '' : ' offline'); }
-var names = { playing: '재생 중', sent_unconfirmed: '재생 준비 중', dispatching: '재생 준비 중', blocked: '재생 버튼을 눌러 주세요', paused: '일시정지', error: '재생을 확인해 주세요', recovery_required: '다시 재생을 눌러 주세요' };
+var names = {observing:'TV 영상 확인됨 · 재생 상태 확인 중', playing: '재생 중', sent_unconfirmed: '재생 준비 중', dispatching: '재생 준비 중', blocked: '재생 버튼을 눌러 주세요', paused: '일시정지', error: '재생을 확인해 주세요', recovery_required: '다시 재생을 눌러 주세요' };
 function artwork(id) { return id ? 'https://i.ytimg.com/vi/' + encodeURIComponent(id) + '/mqdefault.jpg' : window.MusicTheme ? window.MusicTheme.current().art : '/usagi-cheer.jpg'; }
 function refresh() {
   return api('/api/state').then(function(s) {
@@ -21,7 +21,7 @@ function refresh() {
     el('current-art').setAttribute('data-idle',String(!s.current)); el('current-art').src = artwork(s.current && s.current.videoId);
     var recovering = s.current && ['error','recovery_required'].indexOf(s.current.status) >= 0;
     el('playback-status').textContent = s.current ? names[s.current.status] || s.current.status : s.paused ? '잠시 쉬는 중' : '대기 중';
-    var bodyTone=s.current && s.current.source==='background' && s.current.status==='playing' ? 'bgm' : s.current && s.current.source==='external_tv' && s.current.status==='playing' ? 'externalBody' : s.current ? s.current.status==='blocked'?'blockedBody':s.current.status==='recovery_required'?'recoveryBody':s.current.status==='error'?'errorBody':s.current.status==='paused'?'pausedBody':['sent_unconfirmed','dispatching'].indexOf(s.current.status)>=0?s.current.status:'nextBody' : s.paused?'pausedBody':'invite';
+    var bodyTone=s.current && s.current.source==='background' && s.current.status==='playing' ? 'bgm' : s.current && s.current.source==='external_tv' && s.current.status==='playing' ? 'externalBody' : s.current ? s.current.status==='observing'?'observing':s.current.status==='blocked'?'blockedBody':s.current.status==='recovery_required'?'recoveryBody':s.current.status==='error'?'errorBody':s.current.status==='paused'?'pausedBody':['sent_unconfirmed','dispatching'].indexOf(s.current.status)>=0?s.current.status:'nextBody' : s.paused?'pausedBody':'invite';
     setTone('status',bodyTone,'재생 상태를 확인해 주세요.');
     el('recovery').hidden = !recovering; el('recovery-message').textContent = s.current && s.current.error ? '재생 오류: ' + s.current.error : '자동으로 다시 재생하지 않았어요.';
     var paused = s.paused || (s.current && s.current.status === 'paused');
