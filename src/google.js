@@ -68,7 +68,7 @@ export class GoogleWorker {
     const eventId = command.name || `pubsub:${raw.messageId}`;
     check(eventId && !eventId.endsWith('undefined'), 'EVENT_ID', '메시지 식별자가 없습니다.');
     try {
-      await this.engine.command({ ...command, eventId, operator: this.config.operatorUsers.includes(command.user) });
+      await this.engine.command({ ...command, eventId, operator: this.config.operatorUsers.includes(command.user), playbackControl: this.config.memberPlaybackControls === true });
     } catch (e) {
       // User errors are durable replies; transient provider errors are retried by Pub/Sub.
       if (!e.status || e.status >= 500) throw e;

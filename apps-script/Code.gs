@@ -99,7 +99,7 @@ function doPost(e) {
       if (r.op === 'pull') {
         jbWrite(p,'WORKER',{ id:d.clientId,until:now+45000 });
         var queueRevision = jbSaveQueueView(p, d.queueView, d.view);
-        if (d.view && Array.isArray(d.view.queue) && d.view.queue.length <= 8 && Number.isInteger(d.view.queueCount) && d.view.queueCount >= 0 && d.view.queueCount <= 500 && typeof d.view.paused === 'boolean' && typeof d.view.searchEnabled === 'boolean' && d.view.queue.every(function(x) { return x && typeof x.title === 'string' && x.title.length <= 180; }) && (!d.view.current || (typeof d.view.current.title === 'string' && d.view.current.title.length <= 180 && typeof d.view.current.status === 'string' && d.view.current.status.length <= 30))) { jbWrite(p, 'VIEW', { at: now, current: d.view.current, queue: d.view.queue, queueCount: d.view.queueCount, paused: d.view.paused, searchEnabled: d.view.searchEnabled, playerOnline: !!d.view.playerOnline, queueRevision: queueRevision, webUrl: jbWebUrl(d.view.webUrl) }); }
+        if (d.view && Array.isArray(d.view.queue) && d.view.queue.length <= 8 && Number.isInteger(d.view.queueCount) && d.view.queueCount >= 0 && d.view.queueCount <= 500 && typeof d.view.paused === 'boolean' && typeof d.view.searchEnabled === 'boolean' && d.view.queue.every(function(x) { return x && typeof x.title === 'string' && x.title.length <= 180; }) && (!d.view.current || (typeof d.view.current.title === 'string' && d.view.current.title.length <= 180 && typeof d.view.current.status === 'string' && d.view.current.status.length <= 30))) { jbWrite(p, 'VIEW', { at: now, current: d.view.current, queue: d.view.queue, queueCount: d.view.queueCount, memberPlaybackControls: d.view.memberPlaybackControls === true, paused: d.view.paused, searchEnabled: d.view.searchEnabled, playerOnline: !!d.view.playerOnline, queueRevision: queueRevision, webUrl: jbWebUrl(d.view.webUrl) }); }
         if (!ids.length) return { ok:true,command:null,queueRevision:queueRevision };
         var c = jbRead(p,'q_'+ids[0],null);
         if (c.until > now) return { ok:true,command:null,queueRevision:queueRevision };
@@ -177,8 +177,9 @@ function jbPanel(p, space, user, message) {
   }
   var paused = view && (view.paused || view.current && view.current.status === 'paused');
   var controls = [jbButton(paused ? '▶ 계속 재생' : 'Ⅱ 일시정지', paused ? '계속' : '일시정지'), jbButton('⏭ 다음 곡', '다음'), jbButton('정지 · 비우기', 'confirm-stop')];
-  if (view && view.current && ['error', 'recovery_required'].indexOf(view.current.status) >= 0) controls.unshift(jbButton('다시 재생', '재시도'));
-  sections.push({ header: '재생 제어 · 운영자', widgets: [{ buttonList: { buttons: controls } }] });
+  sections.push({ header: view && view.memberPlaybackControls ? '재생 제어 · 모든 참여자' : '재생 제어 · 운영자', widgets: [{ buttonList: { buttons: controls } }] });
+  if (view && view.memberPlaybackControls) sections.push({ widgets: [{textParagraph:{text:'다음 곡·정지·일시정지·계속은 누구나 사용할 수 있어! 정지하면 대기열과 원래 곡 복귀 예약도 모두 비워져.'}}] });
+  if (view && view.current && ['error', 'recovery_required'].indexOf(view.current.status) >= 0) sections.push({header:'복구 · 운영자 전용',widgets:[{buttonList:{buttons:[jbButton('다시 재생 · 운영자', '재시도')]}}]});
   if (view && view.queue.length) sections.push({ header: '다음 곡 · 취소할 곡을 누르세요', widgets: view.queue.map(function(song, i) {
     if (/^[a-f0-9-]{36}$/.test(song.id || '')) return { buttonList: { buttons: [jbButton((i+1) + '. ' + song.title.slice(0, 55) + '  × 취소', '취소 id:' + song.id)] } };
     return { textParagraph: { text: jbHtml((i+1) + '. ' + song.title) } };

@@ -306,3 +306,15 @@ test('private search remains unavailable without configured key and expired resu
 });
 
 test('Chat menus expose only validated local web links without privileged tokens or HTTPS-upgrading buttons',async()=>{const r=runtime(),e=engine(r),w=new AppsScriptWorker({config:config(),engine:e,now:r.now,publicUrl:'http://jukebox-test.local:8787/queue',fetcher:async(_,options)=>new Response(r.context.doPost({postData:{contents:options.body}}).text,{headers:{'Content-Type':'application/json'}}),log:()=>{}});await w.cycle();const reply=r.context.onMessage(r.event('웹'));assert.match(reply.text,/http:\/\/jukebox-test\.local:8787\/queue/);assert.equal(reply.privateMessageViewer.name,'users/test');assert.match(JSON.stringify(reply.cardsV2),/웹 음악방 열기/);assert.doesNotMatch(JSON.stringify(reply),/"openLink"|<a href=|adminToken|playerToken|test-only-not-a-live-secret/);for(const url of ['javascript:alert(1)','http://evil.example/queue','http://good.local:0/queue','http://good.local:8787/queue?adminToken=x'])assert.equal(r.context.jbWebUrl(url),null);});
+
+test('opt-in Chat member controls allow next/stop/pause/resume without granting operator or cross-space access',async()=>{
+ const r=runtime(),e=engine(r);let stops=0;e.adapter.stop=async()=>{stops++};const w=new AppsScriptWorker({config:{...config(),memberPlaybackControls:true},engine:e,now:r.now,fetcher:async(_,o)=>new Response(r.context.doPost({postData:{contents:o.body}}).text,{headers:{'Content-Type':'application/json'}}),log:()=>{}});
+ r.message('일시정지');await w.cycle();assert.equal(e.state.paused,true);r.message('계속');await w.cycle();assert.equal(e.state.paused,false);
+ r.message('추가 https://youtu.be/dQw4w9WgXcQ');await w.cycle();assert.equal(e.state.queue.length,1);r.message('다음');await w.cycle();assert.equal(stops,1);
+ r.message('재시도');await w.cycle();assert.match(r.message('결과'),/운영자/);assert.equal(stops,1);r.message('확인');await w.cycle();assert.match(r.message('결과'),/운영자/);
+ e.state.queue[0].requestedBy='users/other';r.message('취소 1');await w.cycle();assert.match(r.message('결과'),/본인의/);assert.equal(e.state.queue.length,1);
+ assert.match(JSON.stringify(r.context.onMessage(r.event('메뉴')).cardsV2),/재생 제어 · 모든 참여자/);
+ r.message('정지',undefined,'users/test','spaces/other');await w.cycle();assert.equal(stops,1);assert.equal(e.state.queue.length,1);
+ e.state.manualReturn={id:'manual',videoId:'aaaaaaaaaaa',title:'manual',source:'external_tv',resumePositionSeconds:0,expiresAt:r.now()+10000};r.message('정지');await w.cycle();assert.equal(stops,2);assert.equal(e.state.queue.length,0);assert.equal(e.state.manualReturn,null);w.stop();
+ await assert.rejects(e.command({text:'정지',user:'web-visitor'}),{code:'FORBIDDEN'});
+});

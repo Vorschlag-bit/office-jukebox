@@ -26,6 +26,7 @@
     "allowedSpaces": [
       "spaces/YOUR_SPACE"
     ],
+    "memberPlaybackControls": false,
     "operatorUsers": [
       "users/YOUR_USER_ID"
     ]

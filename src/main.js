@@ -42,6 +42,7 @@ export function loadConfig(path) {
   check(Number.isInteger(c.perUserLimit) && c.perUserLimit >= 0 && c.perUserLimit <= 100, 'CONFIG', 'perUserLimit는 0~100 사이 정수여야 합니다.');
   check(typeof c.autoSkipUnplayable === 'boolean' && Number.isInteger(c.handshakeTimeoutMs) && c.handshakeTimeoutMs >= 15000 && c.handshakeTimeoutMs <= 300000, 'CONFIG', '재생 확인 제한과 영상 오류 처리 설정을 확인하세요.');
   if (c.google?.enabled) {
+    check(c.google.memberPlaybackControls === undefined || typeof c.google.memberPlaybackControls === 'boolean', 'CONFIG', 'google.memberPlaybackControls는 true 또는 false여야 합니다.');
     check(Array.isArray(c.google.allowedSpaces) && c.google.allowedSpaces.length > 0 && c.google.allowedSpaces.every(x => typeof x === 'string' && /^spaces\/[A-Za-z0-9_-]+$/.test(x)), 'CONFIG', '허용 채팅방을 spaces/리소스ID 형식으로 지정하세요.');
     check(Array.isArray(c.google.operatorUsers) && c.google.operatorUsers.every(x => typeof x === 'string' && /^users\/[A-Za-z0-9_-]+$/.test(x)), 'CONFIG', '운영자는 users/리소스ID 형식으로 지정하세요. 이메일과 표시 이름은 사용할 수 없습니다.');
     validateBridge(c.google);

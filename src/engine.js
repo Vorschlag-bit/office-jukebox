@@ -81,7 +81,7 @@ export class Engine {
     }
     this.store.save();
   }
-  async command({ text, user = 'local', operator = false, eventId, space, thread, selectionId, includeChoices = false }) {
+  async command({ text, user = 'local', operator = false, playbackControl = false, eventId, space, thread, selectionId, includeChoices = false }) {
     return this.serial(async () => {
       if (eventId && Object.hasOwn(this.state.seen, eventId)) return includeChoices ? structuredClone(this.state.seen[eventId].publicResult || {text:this.state.seen[eventId].reply}) : this.state.seen[eventId].reply;
       check(typeof text === 'string' && text.length <= 500, 'COMMAND', '명령은 500자 이내여야 합니다.');
@@ -138,7 +138,7 @@ export class Engine {
         check(operator || song.requestedBy === user, 'FORBIDDEN', '본인의 신청곡만 취소할 수 있습니다.', 403);
         this.state.queue.splice(index, 1); reply = `신청 취소: ${song.title}`;
       } else if (['일시정지', 'pause', '계속', 'resume'].includes(verb.toLowerCase())) {
-        check(operator, 'FORBIDDEN', '운영자만 실행할 수 있는 명령입니다.', 403);
+        check(operator || playbackControl, 'FORBIDDEN', '운영자만 실행할 수 있는 명령입니다.', 403);
         const pause = ['일시정지', 'pause'].includes(verb.toLowerCase());
         if (this.state.current) {
           check(!['error', 'recovery_required'].includes(this.state.current.status), 'RECOVERY', '오류 또는 복구 상태에서는 재시도 또는 다음을 사용하세요.');
@@ -157,7 +157,7 @@ export class Engine {
         const current = this.state.current;
         reply = `현재: ${current ? `${current.title} [${current.status}]` : '없음'}${this.state.paused ? ' · 대기열 일시정지' : ''}\n대기: ${this.state.queue.map((x, i) => `${i + 1}. ${x.title}`).join('\n') || '없음'}`;
       } else if (['다음', 'next', '정지', 'stop', '재시도', 'retry', '확인', 'confirm'].includes(verb.toLowerCase())) {
-        check(operator, 'FORBIDDEN', '운영자만 실행할 수 있는 명령입니다.', 403);
+        check(operator || playbackControl && ['다음','next','정지','stop'].includes(verb.toLowerCase()), 'FORBIDDEN', '운영자만 실행할 수 있는 명령입니다.', 403);
         if (['확인', 'confirm'].includes(verb.toLowerCase())) {
           check(this.state.current && this.adapter.type !== 'browser', 'NO_CURRENT', '확인할 기본 앱 재생 요청이 없습니다.');
           check(['sent_unconfirmed', 'recovery_required', 'error'].includes(this.state.current.status), 'STATE', '현재 상태에서는 확인할 수 없습니다.');

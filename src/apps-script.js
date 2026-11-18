@@ -61,7 +61,7 @@ export class AppsScriptWorker extends GoogleWorker {
     const snapshot = this.engine.snapshot();
     const view = { current: snapshot.current ? { title: snapshot.current.title.slice(0, 180), status: snapshot.current.status } : null,
       queue: snapshot.queue.slice(0, 8).map(x => ({ id: x.id, title: x.title.slice(0, 180) })), queueCount: snapshot.queue.length,
-      paused: snapshot.paused, searchEnabled: !!this.engine.youtube.key, playerOnline: snapshot.player.online, webUrl: this.publicUrl };
+      memberPlaybackControls: this.config.memberPlaybackControls === true, paused: snapshot.paused, searchEnabled: !!this.engine.youtube.key, playerOnline: snapshot.player.online, webUrl: this.publicUrl };
     const songs = snapshot.queue.map(x => ({ id: x.id, title: [...x.title].slice(0, 80).join('') }));
     const revision = createHash('sha256').update(JSON.stringify(songs)).digest('hex');
     const queueView = this.queueRevision === revision ? undefined : { revision, songs };
