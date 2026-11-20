@@ -21,9 +21,13 @@
     choiceHint: '이~! 마음에 드는 곡을 콕 골라 줘. 검색 결과는 5분 동안 유효해.',
     footer: '쥬르리… 간식 한 입, 노래 한 곡 ♡'
   });
+  var themeHeadings = {
+    chiikawa: '응…! ♡ (오늘의 음악방 꾸미기)',
+    hachiware: '꾸며 볼까? 오늘의 음악방! 고 테마로 ♪'
+  };
   ['chiikawa', 'hachiware'].forEach(function (name) {
     Object.assign(characterCopy[name], {
-      themeHeading: '오늘의 음악방 꾸미기',
+      themeHeading: themeHeadings[name],
       danceHeading: '같이 들으면 더 신나 ♫',
       playlistHeading: '우리의 전체 플리'
     });
