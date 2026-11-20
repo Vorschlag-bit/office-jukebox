@@ -14,6 +14,8 @@ assets['/queue.js'] = ['queue.js', 'text/javascript; charset=utf-8'];
 assets['/requests.js'] = ['requests.js', 'text/javascript; charset=utf-8'];
 assets['/theme.js'] = ['theme.js', 'text/javascript; charset=utf-8'];
 assets['/themes.css'] = ['themes.css', 'text/css; charset=utf-8'];
+assets['/stickers.js'] = ['stickers.js', 'text/javascript; charset=utf-8'];
+for(const name of ['usagi','chiikawa','hachiware']) assets[`/${name}-dance.gif`] = [`${name}-dance.gif`, 'image/gif'];
 for (const character of ['chiikawa', 'hachiware']) {
   assets[`/${character}-avatar.png`] = [`${character}-avatar.png`, 'image/png'];
   assets[`/${character}-wallpaper.jpg`] = [`${character}-wallpaper.jpg`, 'image/jpeg'];

@@ -10,10 +10,10 @@
 
 ## 그림 출처
 
-원본 JPG 3840×2161을 편집하지 않고 로컬 제공하며 CSS에서 표시 영역을 조정합니다.
+배경 원본을 편집하거나 확대 저장하지 않고 로컬 제공합니다. 화면을 흐리게 덮던 반투명 색상 막을 제거했고, 카드 배경은 읽기 쉽게 유지합니다.
 
-- [치이카와 그림 모음](https://chiikawawallpaper.com/ja/desktop-wallpaper/chiikawa): [디저트·별 패턴 원본](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260516/ac687546be5b1ed160220430094f0632.jpg)
-- [하치와레 그림 모음](https://chiikawawallpaper.com/ja/desktop-wallpaper/hachiware): [기타·카메라·음표 패턴 원본](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260514/33d9d667fefd62fbb1f050742cfb57e8.jpg)
+- 치이카와: 1920×1006 분홍 카페 그림. [게시 페이지](https://chiikawawallpaper.com/zh-Hant/desktop-wallpaper?page=9) · [원본](https://r2.chiikawawallpaper.com/wallpaper/wallpaper/20250714/68750ed7402d4.jpeg)
+- 하치와레: 3840×2161 하늘·호수·꽃밭 풍경. [게시 페이지](https://chiikawawallpaper.com/ja/desktop-wallpaper/hachiware?page=2) · [원본](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260513/69d2f24ce7732d88ae27a611dd6f1f25.jpg)
 - 얼굴 PNG 400×400: [치이카와 공식 마켓](https://chiikawamarket.jp/collections/chiikawa), [하치와레 공식 마켓](https://chiikawamarket.jp/collections/hachiware)
 
 캐릭터·원본 그림의 권리는 각 권리자에게 있습니다. 이미지 공개가 이용허락을 의미하지 않습니다. 우사기 그림의 출처는 README에 유지합니다.
@@ -31,3 +31,15 @@
 치이카와는 긴 문장을 더듬는 방식에서 짧은 감탄·호흡(응… / 와…아…! / 으으…) 중심으로 바꾸었습니다. 필요한 사용법은 괄호 안 안내로 따로 적습니다. 페이지 제목·대기·연결·복구·주소 복사·신청 안내·검색 후보 안내·결과 반응에 반영합니다. 곡 제목, 서버 결과 원문, 오류 코드와 재생 상태의 불확실성은 그대로 보존합니다.
 
 [공식 캐릭터 소개](https://www.anime-chiikawa.jp/chara.html)와 한국어 팬 말투 사례([고거·되짚기](https://www.inven.co.kr/board/maple/5974/7295049), [고냥·고래](https://gall.dcinside.com/mgallery/board/view/?id=chiikawa&no=6396&page=1)), [치이카와의 짧은 발화 정리](https://chiikawa.fandom.com/ko/wiki/치이카와)를 참고했습니다. 사용자의 도치·발음 선호를 함께 반영한 창작 UI 문구이며 공식 대사나 고정 번역이라고 주장하지 않습니다.
+
+## 세 친구의 움직이는 스티커
+
+홈과 전체 플리의 테마 선택 아래에 세 캐릭터를 함께 표시합니다. 원본 GIF를 로컬 제공하며 표시 크기보다 큰 해상도를 유지합니다.
+
+| 캐릭터 | 원본 크기 | 프레임 수 | 출처 |
+| --- | --- | --- | --- |
+| 우사기 | 446×480 | 9 | [Tenor](https://tenor.com/view/usagi-dance-chiikawa-cute-rabbit-gif-5479976472584745666) |
+| 치이카와 | 300×276 | 20 | [nagano의 GIPHY 스티커](https://giphy.com/stickers/dance-kawaii-nagano-axHMcU7f1DaWBUFMdN) |
+| 하치와레 | 450×442 | 140 | [Tenor](https://tenor.com/view/hachiware-dance-gif-8205439357428483133) |
+
+‘움직임 쉬기’로 정지 얼굴 그림으로 바꾸고 ‘다시 춤추기’로 복원할 수 있습니다. 선택은 같은 출처의 브라우저에 저장·탭 간 동기화합니다. 별도 선택이 없으면 운영체제의 동작 줄이기 설정을 따릅니다. 탭이 숨겨지거나 스티커가 화면 밖으로 나가면 정지 그림으로 전환해 불필요한 GIF 디코딩을 줄입니다. 재생 제어·신청·YouTube 검색 API를 호출하지 않습니다. GIF 다운로드 합계는 약 3.1MB이며 재방문 캐싱은 브라우저 정책에 따릅니다.
