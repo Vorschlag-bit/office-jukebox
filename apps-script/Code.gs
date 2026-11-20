@@ -51,6 +51,8 @@ function jbHandleMessage(e) {
         var r = jbRead(p, 'r_' + jbHash(space + '/' + u.name), null);
         return jbPanel(p, space, u.name, r && Date.now() - r.at < 86400000 ? jbSafe(r.text) + '\n[노트북 처리 결과: ' + new Date(r.at).toISOString() + ']' : '아직 처리 결과가 없어요. 신청 후 잠시 기다렸다 결과 확인을 눌러 주세요.');
       }
+      if (text === '기능요청함') return jbFeedbackInbox(p, space, u.name);
+      if (text === '기능요청') return { text: '푸루야! 개발자에게 남길 기능이나 개선 의견을 적어 줘.', cardsV2: [{ cardId: 'feedback', card: { sections: [{ widgets: [{ buttonList: { buttons: [jbDialogButton('기능 요청 쓰기', 'feedback-open')] } }] }] } }] };
       var verb = text.split(/\s+/)[0].toLowerCase();
       if (['목록','재생목록','playlist','추가','재생','add','play','검색','search','선택','select','취소','cancel','대기열','queue','상태','status','일시정지','pause','계속','resume','다음','next','정지','stop','재시도','retry','확인','confirm'].indexOf(verb) < 0) return jbPanel(p, space, u.name, '버튼으로 신청하고 제어할 수 있어요. 아래에서 원하는 동작을 골라 주세요.');
       var now = Date.now(), eventAt = Date.parse(e.eventTime || (e.chat && e.chat.eventTime) || m.createTime || '');
@@ -58,14 +60,15 @@ function jbHandleMessage(e) {
       var secret = p.getProperty('SHARED_SECRET');
       if (!secret || secret.length < 32) return { text: 'SHARED_SECRET 설정이 필요합니다.' };
       var id = jbHash(m.name);
-      if (p.getProperty('s_' + id)) return { text: '이미 접수한 요청입니다. 결과 명령으로 확인하세요.' };
+      if (p.getProperty('s_' + id)) return e.jukeboxDialog ? { accepted: true } : { text: '이미 접수한 요청입니다. 결과 명령으로 확인하세요.' };
       var ids = jbIndex(p, 'QUEUE', 'q_', JB_TTL, now);
       if (ids.length >= 50) return { text: '중계 대기열이 가득 찼습니다. 잠시 후 다시 시도하세요.' };
       var record = { id: id, text: text, space: space, user: u.name, at: eventAt };
+      if (e.jukeboxSelectionId) record.selectionId = e.jukeboxSelectionId;
       // Save command before dedup marker: an interrupted handler must not silently lose it.
       jbWrite(p, 'q_' + id, record); if (ids.indexOf(id) < 0) ids.push(id); jbWrite(p, 'QUEUE', ids);
       jbRemember(p, 'SEEN', 's_', id, { at: now }, 100, 86400000, now);
-      return jbPanel(p, space, u.name, '접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.');
+      return e.jukeboxDialog ? { accepted: true } : jbPanel(p, space, u.name, '접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.');
     });
   } catch (_) { return { text: '중계가 일시 중단되었습니다. 잠시 후 재시도하거나 Apps Script 설정·할당량을 확인하세요.' }; }
 }
@@ -87,6 +90,13 @@ function doPost(e) {
         if (!/^[a-zA-Z0-9_-]{1,64}$/.test(d.id || '') || spaces.indexOf(d.space) < 0 || !/^users\/[A-Za-z0-9_-]+$/.test(d.user || '') || typeof d.text !== 'string' || d.text.length > 1500) throw Error('RESULT');
         var done = jbIndex(p, 'RECEIPTS', 'd_', 86400000, now);
         if (done.indexOf(d.id) < 0) {
+          var search = d.search;
+          if (/^[a-f0-9]{64}$/.test(d.commandId || '')) {
+            var searchResult = { at: now, text: d.text, space: d.space, user: d.user };
+            if (search && /^[a-f0-9-]{36}$/.test(search.selectionId || '') && Number.isFinite(search.expiresAt) && Array.isArray(search.titles) && search.titles.length <= 5 && search.titles.every(function(title) { return typeof title === 'string' && title.length <= 180; })) searchResult.search = search;
+            var pending = jbRead(p, 'sp_' + d.commandId, null);
+            if (pending && pending.space === d.space && pending.user === d.user) jbWrite(p, 'sp_' + d.commandId, searchResult);
+          }
           jbRemember(p, 'RESULTS', 'r_', jbHash(d.space+'/'+d.user), { at: now, text: d.text }, 50, 86400000, now);
           jbRemember(p, 'RECEIPTS', 'd_', d.id, { at: now }, 100, 86400000, now);
         }
@@ -100,6 +110,10 @@ function doPost(e) {
         jbWrite(p,'WORKER',{ id:d.clientId,until:now+45000 });
         var queueRevision = jbSaveQueueView(p, d.queueView, d.view);
         if (d.view && Array.isArray(d.view.queue) && d.view.queue.length <= 8 && Number.isInteger(d.view.queueCount) && d.view.queueCount >= 0 && d.view.queueCount <= 500 && typeof d.view.paused === 'boolean' && typeof d.view.searchEnabled === 'boolean' && d.view.queue.every(function(x) { return x && typeof x.title === 'string' && x.title.length <= 180; }) && (!d.view.current || (typeof d.view.current.title === 'string' && d.view.current.title.length <= 180 && typeof d.view.current.status === 'string' && d.view.current.status.length <= 30))) { jbWrite(p, 'VIEW', { at: now, current: d.view.current, queue: d.view.queue, queueCount: d.view.queueCount, memberPlaybackControls: d.view.memberPlaybackControls === true, paused: d.view.paused, searchEnabled: d.view.searchEnabled, playerOnline: !!d.view.playerOnline, queueRevision: queueRevision, webUrl: jbWebUrl(d.view.webUrl) }); }
+        if (Array.isArray(d.view && d.view.feedbackOperators) && d.view.feedbackOperators.length <= 20 && d.view.feedbackOperators.every(function(user) { return /^users\/[A-Za-z0-9_-]+$/.test(user); })) {
+          var operators = JSON.stringify(d.view.feedbackOperators);
+          if (d.view.feedbackOperators.every(function(user) { return user.length <= 150; }) && p.getProperty('FEEDBACK_OPERATORS') !== operators) p.setProperty('FEEDBACK_OPERATORS', operators);
+        }
         if (!ids.length) return { ok:true,command:null,queueRevision:queueRevision };
         var c = jbRead(p,'q_'+ids[0],null);
         if (c.until > now) return { ok:true,command:null,queueRevision:queueRevision };
@@ -168,8 +182,9 @@ function jbPanel(p, space, user, message) {
   widgets.push({ buttonList: { buttons: [jbButton('♫ 전체 플리', 'queue-page:0'), jbButton('↻ 상태 새로고침', '메뉴'), jbButton('내 신청 결과 확인', '결과')] } });
   var sections = [{ widgets: widgets }, { header: '선곡자는 숨기고, 음악은 함께!', widgets: [
     { textParagraph: { text: '신청 링크는 채팅창에 직접 보내지 말고 아래 비공개 신청창에 넣어 줘. 창과 결과는 본인만 볼 수 있어. 공용 화면에는 곡만 표시해!<br><br>Google과 봇 운영자는 내부 식별 정보를 처리할 수 있어. 완전한 추적 불가능 익명은 아니야.' } },
-    { buttonList: { buttons: [jbDialogButton('비공개 신청창 열기', 'open-anonymous'), jbDialogButton('내 신청 결과 · 비공개', 'open-private-result')] } }
+    { buttonList: { buttons: [jbDialogButton('비공개 신청창 열기', 'open-anonymous'), jbDialogButton('내 신청 결과 · 비공개', 'open-private-result'), jbDialogButton('기능 요청', 'feedback-open')] } }
   ] }];
+  if (view && view.searchEnabled) sections[1].widgets.unshift({ buttonList: { buttons: [jbDialogButton('🔎 곡 검색', 'search-open')] } });
   var result = jbRead(p, 'r_' + jbHash(space + '/' + user), null);
   if (user && result && Date.now() - result.at < 300000 && /5분 이내에 선택/.test(result.text)) {
     var options = result.text.split('\n').filter(function(line) { return /^[1-5]\. /.test(line); });
@@ -195,6 +210,8 @@ function jbHandleClick(e) {
     var space = e.space && e.space.name || e.message && e.message.space && e.message.space.name, user = e.user || {};
     if (!/^spaces\/[A-Za-z0-9_-]+$/.test(space || '') || !/^users\/[A-Za-z0-9_-]+$/.test(user.name || '') || user.type === 'BOT') return { text: '지원하지 않는 이벤트입니다.' };
     if (jbSpaces(jbProps()).indexOf(space) < 0) return { text: '허용되지 않은 스페이스입니다.' };
+    if (/^feedback-/.test(command || '')) return jbFeedbackDialog(e, command, field, space, user);
+    if (/^search-/.test(command || '')) return jbSearchDialog(e, command, field, space, user);
     if (e.dialogEventType || /^(open-anonymous|open-private-result|anonymous-)/.test(command || '')) return jbAnonymousDialog(e, command, field, space, user);
     if (/^queue-page:[0-9]{1,2}(?::[a-f0-9]{64})?$/.test(command || '')) {
       var pageParts = command.split(':');
@@ -315,4 +332,115 @@ function jbAnonymousDialog(e, command, field, space, user) {
   var request = { eventTime: e.eventTime, space: { name: space }, user: user, message: { name: space + '/messages/private-' + jbHash(e.message.name + '/' + user.name + '/' + e.eventTime + '/' + command + '/' + song), argumentText: verb + ' ' + song, sender: user } };
   var result = jbHandleMessage(request), accepted = /접수했습니다|이미 접수/.test(result.text || '');
   return jbDialogStatus(accepted ? 'OK' : 'INVALID_ARGUMENT', accepted ? '푸루! 비공개로 접수했어. 아직 재생 확인은 아니야. 잠시 후 내 신청 결과 · 비공개에서 확인해 줘!' : String(result.text || '신청을 확인하지 못했어.'));
+}
+
+function jbDialogForm(title, input, label, command, multiline) {
+  return jbDialog({ sections: [{ header: title, widgets: [
+    { textInput: { name: input, label: label, type: multiline ? 'MULTIPLE_LINE' : 'SINGLE_LINE' } },
+    { buttonList: { buttons: [jbButton(multiline ? '요청 보내기' : '검색', command, input)] } }
+  ] }] });
+}
+
+function jbFeedbackDialog(e, command, field, space, user) {
+  if (e.dialogEventType === 'CANCEL_DIALOG') return jbDialogStatus('OK', '푸루. 창을 닫았어.');
+  if (command === 'feedback-open' && e.dialogEventType === 'REQUEST_DIALOG') {
+    return jbDialogForm('개발자에게 기능 요청', 'feedbackText', '추가하고 싶은 기능이나 불편했던 점 (최대 500자)', 'feedback-submit', true);
+  }
+  var idea = field('feedbackText');
+  if (command !== 'feedback-submit' || e.dialogEventType !== 'SUBMIT_DIALOG' || !idea || idea.length > 500 || !e.message || !e.message.name || !e.eventTime) {
+    return jbDialogStatus('INVALID_ARGUMENT', '요청 내용을 1~500자로 입력해 줘.');
+  }
+  var at = Date.parse(e.eventTime), now = Date.now();
+  if (!isFinite(at) || now - at > JB_TTL || at - now > 60000) return jbDialogStatus('INVALID_ARGUMENT', '요청 시간이 지났어. 창을 다시 열어 줘.');
+  return jbLocked(function(p) {
+    if (!jbRead(p, 'FEEDBACK_OPERATORS', []).length) return jbDialogStatus('UNAVAILABLE', '요청함을 준비하는 중이야. 잠시 후 다시 시도해 줘.');
+    var id = jbHash(space + '/' + user.name + '/' + e.message.name + '/' + e.eventTime);
+    if (p.getProperty('fb_' + id)) return jbDialogStatus('OK', '푸루! 개발자 요청함에 남겼어.');
+    var ids = jbIndex(p, 'FEEDBACK', 'fb_', 30 * 86400000, now);
+    var recent = ids.some(function(key) {
+      var request = jbRead(p, 'fb_' + key, {});
+      return request.user === user.name && request.space === space && now - request.at < 60000;
+    });
+    if (recent) return jbDialogStatus('RESOURCE_EXHAUSTED', '기능 요청은 1분 간격으로 보낼 수 있어.');
+    jbRemember(p, 'FEEDBACK', 'fb_', id, { at: now, space: space, user: user.name, text: idea }, 50, 30 * 86400000, now);
+    return jbDialogStatus('OK', '푸루! 개발자 요청함에 남겼어.');
+  });
+}
+
+function jbFeedbackInbox(p, space, user) {
+  if (jbRead(p, 'FEEDBACK_OPERATORS', []).indexOf(user) < 0) return { text: '기능 요청함은 운영자만 볼 수 있어.' };
+  var entries = jbIndex(p, 'FEEDBACK', 'fb_', 30 * 86400000, Date.now()).map(function(id) {
+    return jbRead(p, 'fb_' + id, null);
+  }).filter(function(entry) { return entry && entry.space === space; }).slice(-10).reverse();
+  var widgets = entries.map(function(entry) {
+    return { textParagraph: { text: jbHtml(new Date(entry.at).toISOString().slice(0, 10) + '\n' + entry.text) } };
+  });
+  if (!widgets.length) widgets.push({ textParagraph: { text: '아직 접수된 기능 요청이 없어.' } });
+  return { text: '이~! 최근 10건을 모았어. 요청은 최대 30일 동안 보관해.', cardsV2: [
+    { cardId: 'feedback-inbox', card: { sections: [{ header: '개발자 기능 요청함', widgets: widgets }] } }
+  ] };
+}
+
+function jbSearchDialog(e, command, field, space, user) {
+  if (e.dialogEventType === 'CANCEL_DIALOG') return jbDialogStatus('OK', '푸루. 검색창을 닫았어.');
+  if (command === 'search-open' && e.dialogEventType === 'REQUEST_DIALOG' || command === 'search-again' && e.dialogEventType === 'SUBMIT_DIALOG') {
+    if (!jbRead(jbProps(), 'VIEW', {}).searchEnabled) return jbDialogStatus('UNAVAILABLE', '지금은 링크로 신청해 줘.');
+    return jbDialogForm('우사기 곡 검색 · 비공개', 'searchSong', '곡명 또는 가수', 'search-submit', false);
+  }
+  if (e.dialogEventType !== 'SUBMIT_DIALOG' || !e.eventTime || !e.message || !e.message.name) {
+    return jbDialogStatus('INVALID_ARGUMENT', '새 메뉴에서 곡 검색을 열어 줘.');
+  }
+  if (command === 'search-submit') {
+    var query = field('searchSong');
+    if (!query || query.length > 300) return jbDialogStatus('INVALID_ARGUMENT', '곡명이나 가수를 1~300자로 입력해 줘.');
+    if (!jbRead(jbProps(), 'VIEW', {}).searchEnabled) return jbDialogStatus('UNAVAILABLE', '지금은 링크로 신청해 줘.');
+    var name = space + '/messages/search-' + jbHash(e.message.name + '/' + user.name + '/' + e.eventTime + '/' + query);
+    var id = jbHash(name);
+    jbLocked(function(p) {
+      if (!p.getProperty('sp_' + id)) jbRemember(p, 'SEARCH_DIALOGS', 'sp_', id, { at: Date.now(), space: space, user: user.name }, 50, JB_TTL, Date.now());
+    });
+    var result = jbHandleMessage({
+      eventTime: e.eventTime, space: { name: space }, user: user, jukeboxDialog: true,
+      message: { name: name, argumentText: '검색 ' + query, sender: user }
+    });
+    if (!result.accepted) return jbDialogStatus('INVALID_ARGUMENT', result.text || '검색을 접수하지 못했어.');
+    return jbSearchResultDialog(jbProps(), id, space, user.name);
+  }
+  var parts = /^search-(check|pick):([a-f0-9]{64})(?::([1-5]))?$/.exec(command || '');
+  if (!parts || (parts[1] === 'pick') !== !!parts[3]) return jbDialogStatus('INVALID_ARGUMENT', '검색창을 다시 열어 줘.');
+  if (parts[1] === 'check') return jbSearchResultDialog(jbProps(), parts[2], space, user.name);
+  var record = jbRead(jbProps(), 'sp_' + parts[2], {});
+  if (record.user !== user.name || record.space !== space || !record.search || record.search.expiresAt <= Date.now() || !record.search.titles[Number(parts[3]) - 1]) {
+    return jbDialogStatus('INVALID_ARGUMENT', '검색 결과가 만료됐어. 다시 검색해 줘.');
+  }
+  var picked = jbHandleMessage({
+    eventTime: e.eventTime, space: { name: space }, user: user, jukeboxDialog: true, jukeboxSelectionId: record.search.selectionId,
+    message: { name: space + '/messages/pick-' + jbHash(parts[2] + '/' + parts[3]), argumentText: '선택 ' + parts[3], sender: user }
+  });
+  return jbDialogStatus(picked.accepted ? 'OK' : 'INVALID_ARGUMENT', picked.accepted ? '푸루! 신청을 접수했어. 대기열에 담겼는지는 내 신청 결과에서 확인해 줘.' : picked.text);
+}
+
+function jbSearchResultDialog(p, id, space, user) {
+  var result = jbRead(p, 'sp_' + id, {});
+  var widgets = [], buttons = [jbButton('다시 검색', 'search-again')];
+  var status = '검색 결과가 만료됐어. 다시 검색해 줘.';
+  if (result.space === space && result.user === user && Date.now() - result.at < JB_TTL) {
+    if (result.search && result.search.expiresAt > Date.now()) {
+      status = '야핫! 듣고 싶은 곡 옆의 신청을 눌러 줘.';
+      result.search.titles.forEach(function(title, index) {
+        widgets.push({ decoratedText: {
+          text: jbHtml(title), wrapText: true,
+          button: jbButton('＋ 신청', 'search-pick:' + id + ':' + (index + 1))
+        } });
+      });
+    } else if (result.text && !result.search) {
+      status = result.text;
+    } else if (!result.text) {
+      status = '푸루! 곡을 찾는 중이야. 잠시 후 결과 보기를 눌러 줘.';
+      buttons.unshift(jbButton('↻ 결과 보기', 'search-check:' + id));
+    }
+  }
+  widgets.unshift({ textParagraph: { text: jbHtml(status) } });
+  widgets.push({ buttonList: { buttons: buttons } });
+  return jbDialog({ sections: [{ header: '우사기 곡 검색 · 비공개', widgets: widgets }] });
 }

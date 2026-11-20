@@ -190,7 +190,7 @@ export class Engine {
         // Bound deduplication storage; delivery TTL and Pub/Sub retention are separate concerns.
         const keys = Object.keys(this.state.seen);
         for (const key of keys.slice(0, Math.max(0, keys.length - 5000))) delete this.state.seen[key];
-        if (space) this.state.outbox.push({ id: randomUUID(), space, user, thread, text: reply });
+        if (space) this.state.outbox.push({ id: randomUUID(), space, user, thread, text: reply, commandId: eventId, ...(publicResult?.choices ? { search: publicResult } : {}) });
       }
       this.store.save();
       await this.dispatch();

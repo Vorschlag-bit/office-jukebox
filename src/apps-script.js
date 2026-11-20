@@ -49,7 +49,7 @@ export class AppsScriptWorker extends GoogleWorker {
         await this.engine.serial(async () => { this.engine.state.outbox = this.engine.state.outbox.filter(x => x.id !== item.id); this.engine.state.deadLetters.push({ ...item, failure: 'BRIDGE_RECIPIENT', failedAt: this.now() }); this.engine.state.deadLetters = this.engine.state.deadLetters.slice(-100); this.engine.store.save(); });
         continue;
       }
-      try { await this.bridge('result', { id: item.id, space: item.space, user: item.user, text: String(item.text).slice(0, 1500) }); }
+      try { await this.bridge('result', { id: item.id, space: item.space, user: item.user, text: String(item.text).slice(0, 1500), commandId: /^[a-f0-9]{64}$/.test(item.commandId || '') ? item.commandId : undefined, search: item.search?.choices ? { selectionId: item.search.selectionId, expiresAt: item.search.expiresAt, titles: item.search.choices.map(x => x.title.slice(0, 180)) } : undefined }); }
       catch (e) { await this.deferReply(item, e.code); throw e; }
       await this.engine.serial(async () => { this.engine.state.outbox = this.engine.state.outbox.filter(x => x.id !== item.id); this.engine.store.save(); });
       this.health.lastSendAt = this.now();
@@ -61,7 +61,7 @@ export class AppsScriptWorker extends GoogleWorker {
     const snapshot = this.engine.snapshot();
     const view = { current: snapshot.current ? { title: snapshot.current.title.slice(0, 180), status: snapshot.current.status } : null,
       queue: snapshot.queue.slice(0, 8).map(x => ({ id: x.id, title: x.title.slice(0, 180) })), queueCount: snapshot.queue.length,
-      memberPlaybackControls: this.config.memberPlaybackControls === true, paused: snapshot.paused, searchEnabled: !!this.engine.youtube.key, playerOnline: snapshot.player.online, webUrl: this.publicUrl };
+      memberPlaybackControls: this.config.memberPlaybackControls === true, feedbackOperators: this.config.operatorUsers.slice(0, 20), paused: snapshot.paused, searchEnabled: !!this.engine.youtube.key, playerOnline: snapshot.player.online, webUrl: this.publicUrl };
     const songs = snapshot.queue.map(x => ({ id: x.id, title: [...x.title].slice(0, 80).join('') }));
     const revision = createHash('sha256').update(JSON.stringify(songs)).digest('hex');
     const queueView = this.queueRevision === revision ? undefined : { revision, songs };
@@ -72,7 +72,7 @@ export class AppsScriptWorker extends GoogleWorker {
     if (!c) return;
     check(typeof c.id === 'string' && c.id.length <= 150 && typeof c.lease === 'string' && c.lease.length <= 100 && typeof c.text === 'string' && c.text.length <= 500 && /^users\/[A-Za-z0-9_-]+$/.test(c.user || '') && this.config.allowedSpaces.includes(c.space) && Number.isFinite(c.at), 'BRIDGE_COMMAND', '잘못된 중계 명령입니다.', 502);
     // Reuse durable Google event processing, operator checks, age checks and poison handling.
-    await this.receive({ message: { data: Buffer.from(JSON.stringify({ type: 'MESSAGE', eventTime: new Date(c.at).toISOString(), space: { name: c.space }, user: { name: c.user }, message: { name: c.id, argumentText: c.text, sender: { name: c.user, type: 'HUMAN' } } })).toString('base64') } });
+    await this.receive({ message: { data: Buffer.from(JSON.stringify({ type: 'MESSAGE', eventTime: new Date(c.at).toISOString(), space: { name: c.space }, user: { name: c.user }, message: { name: c.id, argumentText: c.text, sender: { name: c.user, type: 'HUMAN' } } })).toString('base64') } }, { includeChoices: /^(검색|search)\s/i.test(c.text), selectionId: c.selectionId });
     await this.bridge('ack', { clientId: this.clientId, id: c.id, lease: c.lease });
     try { await this.flush(); } catch { /* Durable result remains queued. */ }
   }

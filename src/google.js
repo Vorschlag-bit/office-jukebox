@@ -51,7 +51,7 @@ export class GoogleWorker {
     check(/^projects\/[A-Za-z0-9_-]+\/subscriptions\/[A-Za-z0-9_.~-]+$/.test(this.config.subscription || ''), 'SUBSCRIPTION', '올바른 Pub/Sub subscription 이름이 필요합니다.');
     return this.request('https://www.googleapis.com/auth/pubsub', `https://pubsub.googleapis.com/v1/${this.config.subscription}:${method}`, body);
   }
-  async receive(item) {
+  async receive(item, { includeChoices = false, selectionId } = {}) {
     if (!item?.message) return;
     const raw = item.message;
     if (typeof raw.data !== 'string' || raw.data.length > 65536) return;
@@ -68,10 +68,10 @@ export class GoogleWorker {
     const eventId = command.name || `pubsub:${raw.messageId}`;
     check(eventId && !eventId.endsWith('undefined'), 'EVENT_ID', '메시지 식별자가 없습니다.');
     try {
-      await this.engine.command({ ...command, eventId, operator: this.config.operatorUsers.includes(command.user), playbackControl: this.config.memberPlaybackControls === true });
+      await this.engine.command({ ...command, eventId, includeChoices, selectionId, operator: this.config.operatorUsers.includes(command.user), playbackControl: this.config.memberPlaybackControls === true });
     } catch (e) {
       // User errors are durable replies; transient provider errors are retried by Pub/Sub.
-      if (!e.status || e.status >= 500) throw e;
+      if (!e.status || e.status >= 500 && !(includeChoices && ['NETWORK', 'UPSTREAM', 'UPSTREAM_FORMAT', 'YOUTUBE_KEY_INVALID'].includes(e.code))) throw e;
       await this.engine.serial(async () => {
         if (Object.hasOwn(this.engine.state.seen, eventId)) return;
         check(this.engine.state.outbox.length < 500, 'NOTIFICATIONS_FULL', '응답 대기열이 가득 찼습니다.', 503);
@@ -79,7 +79,7 @@ export class GoogleWorker {
         Object.defineProperty(this.engine.state.seen, eventId, { value: { reply: e.message, at: this.now() }, writable: true, enumerable: true, configurable: true });
         const ids = Object.keys(this.engine.state.seen);
         for (const key of ids.slice(0, Math.max(0, ids.length - 5000))) delete this.engine.state.seen[key];
-        this.engine.state.outbox.push({ id, space: command.space, user: command.user, thread: command.thread, text: e.message });
+        this.engine.state.outbox.push({ id, space: command.space, user: command.user, thread: command.thread, text: e.message, commandId: eventId });
         this.engine.store.save();
       });
     }

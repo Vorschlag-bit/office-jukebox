@@ -318,3 +318,44 @@ test('opt-in Chat member controls allow next/stop/pause/resume without granting 
  e.state.manualReturn={id:'manual',videoId:'aaaaaaaaaaa',title:'manual',source:'external_tv',resumePositionSeconds:0,expiresAt:r.now()+10000};r.message('정지');await w.cycle();assert.equal(stops,2);assert.equal(e.state.queue.length,0);assert.equal(e.state.manualReturn,null);w.stop();
  await assert.rejects(e.command({text:'정지',user:'web-visitor'}),{code:'FORBIDDEN'});
 });
+
+test('new Chat search keeps same dialog, isolates users and rejects stale search picks', async () => {
+  const r = runtime(), e = engine(r), w = worker(e, r);
+  e.youtube.key = 'test-only';
+  e.youtube.search = async phrase => [{ videoId: phrase === 'old' ? 'dQw4w9WgXcQ' : 's7gef3SXSbY', title: phrase, source: 'search' }];
+  await w.cycle();
+  const submit = query => r.context.onCardClick(dialogEvent(r, 'search-submit', {
+    dialogEventType: 'SUBMIT_DIALOG',
+    common: { parameters: { command: 'search-submit' }, formInputs: { searchSong: { stringInputs: { value: [query] } } } }
+  }));
+  const click = (command, user = 'users/test') => r.context.onCardClick(dialogEvent(r, command, { dialogEventType: 'SUBMIT_DIALOG', user: { name: user, type: 'HUMAN' } }));
+  const oldCheck = JSON.stringify(submit('old')).match(/search-check:[a-f0-9]{64}/)[0];
+  assert.doesNotMatch(JSON.stringify(click(oldCheck, 'users/other')), /search-pick|곡을 찾는/);
+  await w.cycle();
+  const oldPick = JSON.stringify(click(oldCheck)).match(/search-pick:[a-f0-9]{64}:1/)[0];
+  const newCheck = JSON.stringify(submit('new')).match(/search-check:[a-f0-9]{64}/)[0];
+  await w.cycle();
+  click(oldPick);
+  await w.cycle();
+  assert.equal(e.state.queue.length, 0);
+  const newPick = JSON.stringify(click(newCheck)).match(/search-pick:[a-f0-9]{64}:1/)[0];
+  assert.match(JSON.stringify(click(newPick)), /접수했어/);
+  click(newPick);
+  await w.cycle();
+  assert.deepEqual(e.state.queue.map(song => song.videoId), ['s7gef3SXSbY']);
+});
+
+test('feature feedback is stored once and exposed privately only to configured operators', async () => {
+  const r = runtime(), w = worker(engine(r), r);
+  await w.cycle();
+  const submit = dialogEvent(r, 'feedback-submit', { dialogEventType: 'SUBMIT_DIALOG',
+    common: { parameters: { command: 'feedback-submit' }, formInputs: { feedbackText: { stringInputs: { value: ['<기능> 제안'] } } } } });
+  assert.match(JSON.stringify(r.context.onCardClick(submit)), /요청함에 남겼어/);
+  r.context.onCardClick(submit);
+  assert.equal(JSON.parse(r.props.get('FEEDBACK')).length, 1);
+  assert.doesNotMatch(JSON.stringify(r.context.onMessage(r.event('기능요청함'))), /제안/);
+  const inbox = r.context.onMessage(r.event('기능요청함', undefined, 'users/operator'));
+  assert.equal(inbox.privateMessageViewer.name, 'users/operator');
+  assert.match(JSON.stringify(inbox), /&lt;기능&gt; 제안/);
+  assert.equal(r.props.has('QUEUE'), false);
+});
