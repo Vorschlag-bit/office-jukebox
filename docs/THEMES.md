@@ -12,8 +12,8 @@
 
 배경 원본을 편집하거나 확대 저장하지 않고 로컬 제공합니다. 화면을 흐리게 덮던 반투명 색상 막을 제거했고, 카드 배경은 읽기 쉽게 유지합니다.
 
-- 치이카와: 1920×1006 분홍 카페 그림. [게시 페이지](https://chiikawawallpaper.com/zh-Hant/desktop-wallpaper?page=9) · [원본](https://r2.chiikawawallpaper.com/wallpaper/wallpaper/20250714/68750ed7402d4.jpeg)
-- 하치와레: 3840×2161 하늘·호수·꽃밭 풍경. [게시 페이지](https://chiikawawallpaper.com/ja/desktop-wallpaper/hachiware?page=2) · [원본](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260513/69d2f24ce7732d88ae27a611dd6f1f25.jpg)
+- 치이카와: 3840×2161 별과 디저트 사이에서 다양한 표정을 짓는 치이카와 패턴. [게시 페이지](https://chiikawawallpaper.com/ja/desktop-wallpaper/chiikawa) · [원본](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260516/ac687546be5b1ed160220430094f0632.jpg)
+- 하치와레: 3840×2161 기타를 치고 사진을 찍는 하치와레의 연파랑 패턴. [게시 페이지](https://chiikawawallpaper.com/desktop-wallpaper/hachiware) · [원본](https://r2.chiikawawallpaper.com/wallpaper/desktop/20260514/33d9d667fefd62fbb1f050742cfb57e8.jpg)
 - 얼굴 PNG 400×400: [치이카와 공식 마켓](https://chiikawamarket.jp/collections/chiikawa), [하치와레 공식 마켓](https://chiikawamarket.jp/collections/hachiware)
 
 캐릭터·원본 그림의 권리는 각 권리자에게 있습니다. 이미지 공개가 이용허락을 의미하지 않습니다. 우사기 그림의 출처는 README에 유지합니다.
