@@ -253,8 +253,16 @@ export class Engine {
         const id = randomUUID();
         this.state.current = {id, videoId: observedVideoId, title: `YouTube ${observedVideoId}`, source: 'external_tv', sessionId: observationSessionId, status: 'observing', confirmation: 'identity-only', observedPlaying: false, desiredState: 'playing', controlVersion: 0, addedAt: this.now(), expiresAt: this.now() + 7 * 86400000};
         this.store.save();
-        if (typeof this.youtube.resolve === 'function') void Promise.resolve().then(()=>this.youtube.resolve(`https://www.youtube.com/watch?v=${observedVideoId}`,false)).then(song=>this.serial(async()=>{if(this.state.current?.id===id && song?.videoId===observedVideoId && typeof song.title==='string'){this.state.current.title=song.title.slice(0,300);this.store.save();}})).catch(()=>{});
-        // Display reconciliation alone must never launch or consume a request.
+        if (typeof this.youtube.resolve === 'function') void Promise.resolve()
+          .then(() => this.youtube.resolve(`https://www.youtube.com/watch?v=${observedVideoId}`, false))
+          .then(song => this.serial(async () => {
+            if (song?.videoId !== observedVideoId || typeof song.title !== 'string' || !song.title.trim()) return;
+            const track = this.state.current?.id === id ? this.state.current : this.state.manualReturn?.id === id ? this.state.manualReturn : null;
+            if (track) { track.title = song.title.slice(0, 300); this.store.save(); }
+          })).catch(() => {});
+        // An already accepted request has the same priority as one sent after
+        // identification. A paused queue still blocks dispatch.
+        if (this.state.queue.length) await this.dispatch();
         return true;
       }
       if (event === 'position' && this.adapter.type === 'lounge' && verifiedObservation) {

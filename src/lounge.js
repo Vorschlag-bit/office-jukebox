@@ -129,9 +129,12 @@ export class LoungeAdapter {
     this.client = dependencies.client || new LoungeClient(config, { ...dependencies, onEvent: event => this.handle(event) });
     this.client.onEvent = event => this.handle(event);
     this.controller = new AbortController();
+    this.now = dependencies.now || Date.now;
+    this.lastObservationAt = null;
+    this.lastStatusError = null;
   }
   setListener(listener) { this.listener = listener; }
-  info() { return { type: this.type, nativeApp: true, automaticQueue: true, verification: 'video-id-and-playback-nonce', experimental: true, online: this.online, autoplayMode: this.autoplayMode, policyError: this.policyError, statusQueries: this.statusQueries, identityConflict: !!this.identityConflict, identitySource: this.identityConflict ? 'queried-subtitles-track' : 'now-playing' }; }
+  info() { return { type: this.type, nativeApp: true, automaticQueue: true, verification: 'video-id-and-playback-nonce', experimental: true, online: this.online, autoplayMode: this.autoplayMode, policyError: this.policyError, statusQueries: this.statusQueries, lastStatusError: this.lastStatusError, lastObservationAt: this.lastObservationAt, identityConflict: !!this.identityConflict, identitySource: this.identityConflict ? 'queried-subtitles-track' : 'now-playing' }; }
   emit(event, extra = {}) { if (this.target) this.listener({ sessionId: this.target.sessionId, videoId: this.target.videoId, event, ...extra }); }
   async disableAutoplay() {
     if (this.autoplayRequest) return this.autoplayRequest;
@@ -149,7 +152,26 @@ export class LoungeAdapter {
     if (this.statusRequest) return this.statusRequest;
     if (!this.target || this.controller.signal.aborted) return;
     this.statusQueries++;
-    this.statusRequest = (async () => { if (this.statusQueries % 3 === 1) { this.identityQueries++; await this.client.command('getSubtitlesTrack'); } await this.client.command('getNowPlaying'); })().catch(() => {}).finally(() => { this.statusRequest = null; });
+    this.statusRequest = (async () => {
+      const now = this.now();
+      if (this.client.sid && now - Math.max(this.lastObservationAt ?? 0, this.observationWindowAt ?? now) >= 45000) {
+        // A bind can acknowledge commands even when its playback events stop.
+        // Renew only the observation session; never resend playback commands.
+        this.online = false;
+        this.lastStatusError = 'TV_STATUS_SILENT';
+        this.emit('offline');
+        this.client.sid = null;
+        this.observationWindowAt = now;
+      }
+      if (this.statusQueries % 3 === 1) {
+        this.identityQueries++;
+        try { await this.client.command('getSubtitlesTrack'); }
+        catch (error) { this.lastStatusError = error.code || 'TV_STATUS_QUERY'; }
+      }
+      await this.client.command('getNowPlaying');
+    })().catch(error => {
+      this.lastStatusError = error.code || 'TV_STATUS_QUERY';
+    }).finally(() => { this.statusRequest = null; });
     return this.statusRequest;
   }
   handle(event) {
@@ -163,7 +185,7 @@ export class LoungeAdapter {
     const target = this.target, payload = event.args[0];
     // AID restarts at zero after a new BrowserChannel session. Old sessions are
     // already fenced by LoungeClient. Do not discard the new session forever.
-    if (target && target.epoch !== this.client.epoch) { target.epoch = this.client.epoch; target.afterAid = -1; target.idleQuery = null; target.liveEpoch = null; }
+    if (target && target.epoch !== this.client.epoch) { target.epoch = this.client.epoch; target.afterAid = -1; target.idleQuery = null; target.liveEpoch = null; target.adActive = false; }
     if (!target || !payload || typeof payload !== 'object' || event.id <= target.afterAid) return;
     if (event.name === 'onSubtitlesTrackChanged') {
       const video = payload.videoId;
@@ -172,6 +194,7 @@ export class LoungeAdapter {
       if (!hint || hint.videoId !== video || hint.epoch !== this.client.epoch) hint = {videoId: video, epoch: this.client.epoch, query: this.identityQueries, confirmations: 1};
       else if (hint.query !== this.identityQueries) { hint.query = this.identityQueries; hint.confirmations++; }
       this.identityCandidate = hint;
+      if (hint.confirmations >= 2) this.recordObservation();
       if (hint.confirmations < 2 || video === target.videoId) return;
       // A receiver may retain a stale nowPlaying item while its explicitly
       // queried subtitle context follows the visible video. Identity only:
@@ -218,6 +241,7 @@ export class LoungeAdapter {
     } else if (event.name !== 'onStateChange') return;
     // onStateChange lacks videoId. Only a matching playback nonce may complete this request.
     if (!target.cpn || payload.cpn !== target.cpn || (payload.videoId && payload.videoId !== target.videoId)) return;
+    this.recordObservation();
     const progress = this.position(payload);
     if (!target.adActive && Object.keys(progress).length) this.emit('position', { verifiedObservation: true, ...progress });
     const state = Number(payload.state);
@@ -227,6 +251,10 @@ export class LoungeAdapter {
     else if (state === 2 && target.playing) this.emit('paused');
     else if (state === 3 && target.playing) this.emit('buffering');
     else if (state === 0 && target.playing && !target.finished) { target.finished = true; this.emit('ended', { verifiedObservation: true }); }
+  }
+  recordObservation() {
+    this.lastObservationAt = this.now();
+    this.lastStatusError = null;
   }
   position(payload) {
     const value = key => (typeof payload[key] === 'string' || typeof payload[key] === 'number') && String(payload[key]).trim() !== '' && Number.isFinite(Number(payload[key])) && Number(payload[key]) >= 0 && Number(payload[key]) <= 604800 ? Number(payload[key]) : undefined;
@@ -238,6 +266,7 @@ export class LoungeAdapter {
     check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
     await this.disableAutoplay();
     this.identityConflict = null; this.identityCandidate = null;
+    this.observationWindowAt = this.now();
     this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, epoch: this.client.epoch, previousCpn: this.lastCpn, cpn: null, playing: false, finished: false };
     const result = await this.client.command('setPlaylist', { videoId: track.videoId, videoIds: track.videoId, currentIndex: 0, currentTime: Number.isFinite(track.resumePositionSeconds) && track.resumePositionSeconds >= 0 && track.resumePositionSeconds <= 604800 ? track.resumePositionSeconds : 0 });
     this.startMonitoring();
@@ -247,8 +276,9 @@ export class LoungeAdapter {
   }
   async attach(track) {
     check(!this.controller.signal.aborted, 'ADAPTER_CLOSED', '종료 중인 재생기입니다.');
-    await this.client.connect();
-    // Observe the already-playing item after restart; never issue play/seek here.
+    // Install the target before binding so initial playback events can be observed.
+    // Both monitoring paths retry even if the first bind fails.
+    this.observationWindowAt = this.now();
     this.target = { sessionId: track.sessionId, videoId: track.videoId, afterAid: this.client.aid, epoch: this.client.epoch, previousCpn: null, cpn: null, playing: false, finished: false, observing: true };
     this.startMonitoring();
     await this.requestStatus();

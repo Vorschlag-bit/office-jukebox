@@ -68,7 +68,7 @@ test('request batch returns to interrupted manual song at its observed position,
 });
 test('manual return survives restart during a request and never replays an unconfirmed launch',async()=>{
  const {engine,adapter,store,emit,calls}=setup();await engine.start();await emit('playing');await engine.nativeEvent({...engine.state.current,event:'external',verifiedObservation:true,observedVideoId:'aaaaaaaaaaa',observationSessionId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',observedState:1,positionSeconds:30,durationSeconds:300});await engine.command({text:'추가 one'});const request=engine.state.current.id,count=calls.length;
- const restored=new Engine({store,adapter,youtube:engine.youtube,background:{enabled:true}});await restored.start();assert.equal(calls.length,count);assert.equal(store.state.current.id,request);assert.equal(store.state.manualReturn.videoId,'aaaaaaaaaaa');assert.equal(store.state.current.status,'recovery_required');
+ const restored=new Engine({store,adapter,youtube:engine.youtube,now:engine.now,background:{enabled:true}});await restored.start();assert.equal(calls.length,count);assert.equal(store.state.current.id,request);assert.equal(store.state.manualReturn.videoId,'aaaaaaaaaaa');assert.equal(store.state.current.status,'recovery_required');
  await restored.nativeEvent({...store.state.current,event:'playing',verifiedObservation:true});await restored.nativeEvent({...store.state.current,event:'ended',verifiedObservation:true});assert.equal(store.state.current.videoId,'aaaaaaaaaaa');assert.equal(store.state.current.resumePositionSeconds,30);validateState(store.state);
 });
 test('stop clears manual return; absent/expired return uses BGM, and live position is not treated as a seek target',async()=>{

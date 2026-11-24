@@ -268,3 +268,60 @@ test('identity-only reconciliation never starts playback, but an explicit reques
  adapter.identityQueries=1;send(12,'onSubtitlesTrackChanged',{videoId:'aaaaaaaaaaa'});adapter.identityQueries=2;send(13,'onSubtitlesTrackChanged',{videoId:'aaaaaaaaaaa'});await engine.chain;assert.equal(store.state.current.videoId,'aaaaaaaaaaa');assert.equal(store.state.current.status,'observing');assert.equal(store.state.current.observedPlaying,false);assert.equal(calls.filter(x=>x.name==='setPlaylist').length,count);
  send(14,'nowPlaying',{videoId:track.videoId,cpn:'original',state:0});await engine.chain;assert.equal(store.state.current.videoId,'aaaaaaaaaaa');await engine.command({text:'추가 two'});assert.equal(calls.filter(x=>x.name==='setPlaylist').length,count+1);assert.equal(store.state.manualReturn.videoId,'aaaaaaaaaaa');assert.equal(store.state.manualReturn.resumePositionSeconds,0);
 });
+
+test('restart captures playback in the initial bind without resending the song', async t => {
+  const { adapter, calls, send } = adapterFixture(t);
+  const store = new MemoryStore();
+  store.state.current = { ...track, source: 'background', desiredState: 'playing' };
+  const poll = adapter.client.poll;
+  adapter.client.poll = signal => {
+    adapter.client.epoch++;
+    send(2, 'nowPlaying', { videoId: track.videoId, cpn: 'bind-observation', state: 1 });
+    return poll(signal);
+  };
+  const engine = new Engine({ store, youtube: {}, adapter });
+  await engine.start();
+  await engine.chain;
+  assert.equal(engine.state.current.status, 'playing');
+  assert.equal(calls.some(call => call.name === 'setPlaylist'), false);
+});
+
+test('silent TV session renews read-only observations even if the subtitle query fails', async t => {
+  const { adapter, calls, send } = adapterFixture(t);
+  let at = 1000;
+  adapter.now = () => at;
+  await adapter.attach(track);
+  adapter.client.sid = 'silent';
+  const command = adapter.client.command;
+  adapter.client.command = async name => {
+    await command(name);
+    if (name === 'getSubtitlesTrack') throw new Error('subtitle query unavailable');
+  };
+  at += 45000;
+  adapter.statusQueries = 3;
+  await adapter.requestStatus();
+  assert.equal(adapter.client.sid, null);
+  assert.deepEqual(calls.slice(-2).map(call => call.name), ['getSubtitlesTrack', 'getNowPlaying']);
+  assert.ok(adapter.info().lastStatusError);
+  send(11, 'nowPlaying', { videoId: track.videoId, cpn: 'recovered', state: 1 });
+  assert.equal(adapter.info().lastStatusError, null);
+});
+
+test('an existing queued song gets priority when the manual video is identified later', async t => {
+  const { adapter, calls, send } = adapterFixture(t);
+  const store = new MemoryStore();
+  store.state.current = { ...track, source: 'background', desiredState: 'playing' };
+  const engine = new Engine({ store, youtube: { resolve: async () => ({ videoId: 'bbbbbbbbbbb', title: 'queued song' }) }, adapter });
+  await engine.start();
+  await engine.command({ text: '추가 test' });
+  const queued = engine.state.queue[0].id;
+  assert.equal(calls.some(call => call.name === 'setPlaylist'), false);
+  adapter.identityQueries = 1;
+  send(11, 'onSubtitlesTrackChanged', { videoId: 'aaaaaaaaaaa' });
+  adapter.identityQueries = 2;
+  send(12, 'onSubtitlesTrackChanged', { videoId: 'aaaaaaaaaaa' });
+  await engine.chain;
+  assert.equal(engine.state.current.id, queued);
+  assert.equal(engine.state.manualReturn.videoId, 'aaaaaaaaaaa');
+  assert.equal(calls.filter(call => call.name === 'setPlaylist').length, 1);
+});
