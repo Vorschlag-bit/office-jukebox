@@ -15,7 +15,7 @@ function runtime() {
   let at = Date.now(), locked = false;
   const props = new Map([['SHARED_SECRET', secret], ['ALLOWED_SPACES', '["spaces/test"]']]), cache = new Map();
   const p = { getProperty: k => props.get(k) ?? null, setProperty(k,v) { assert.ok(Buffer.byteLength(v) <= 9000, `property too large: ${k}`); props.set(k,v); assert.ok([...props.values()].reduce((n,v) => n+Buffer.byteLength(v),0) < 500000); }, deleteProperty: k => props.delete(k) };
-  const context = vm.createContext({ Date: class extends Date { static now() { return at; } }, PropertiesService: { getScriptProperties: () => p }, LockService: { getScriptLock: () => ({ tryLock() { if (locked) return false; locked=true; return true; }, releaseLock() { locked=false; } }) }, CacheService: { getScriptCache: () => ({ get(k) { const v=cache.get(k); return v && v.until>at ? v.value : null; }, put(k,value,seconds) { cache.set(k,{value,until:at+seconds*1000}); } }) }, Utilities: { Charset: {UTF_8:'utf8'}, DigestAlgorithm: {SHA_256:'sha256'}, computeDigest: (_,s) => [...createHash('sha256').update(s).digest()], computeHmacSha256Signature: (s,key) => [...createHmac('sha256',key).update(s).digest()], getUuid: randomUUID }, ContentService: { MimeType:{JSON:'application/json'}, createTextOutput: text => ({ text, setMimeType() { return this; } }) } });
+  const context = vm.createContext({ Date: class extends Date { static now() { return at; } }, PropertiesService: { getScriptProperties: () => p }, LockService: { getScriptLock: () => ({ tryLock() { if (locked) return false; locked=true; return true; }, releaseLock() { locked=false; } }) }, CacheService: { getScriptCache: () => ({ get(k) { const v=cache.get(k); return v && v.until>at ? v.value : null; }, put(k,value,seconds) { cache.set(k,{value,until:at+seconds*1000}); } }) }, Utilities: { Charset: {UTF_8:'utf8'}, DigestAlgorithm: {SHA_256:'sha256'}, computeDigest: (_,s) => [...createHash('sha256').update(s).digest()], computeHmacSha256Signature: (s,key) => [...createHmac('sha256',key).update(s).digest()], getUuid: randomUUID, sleep(ms) { assert.equal(locked, false); at += ms; } }, ContentService: { MimeType:{JSON:'application/json'}, createTextOutput: text => ({ text, setMimeType() { return this; } }) } });
   vm.runInContext(readFileSync(new URL('../apps-script/Code.gs',import.meta.url),'utf8'),context);
   const envelope = (op,data={}) => { const r={v:1,ts:at,nonce:randomUUID(),op,payload:JSON.stringify(data)}; r.signature=createHmac('sha256',secret).update(`1\n${r.ts}\n${r.nonce}\n${r.op}\n${r.payload}`).digest('hex'); return r; };
   const post = r => JSON.parse(context.doPost({postData:{contents:JSON.stringify(r)}}).text);
@@ -332,8 +332,13 @@ test('new Chat search keeps same dialog, isolates users and rejects stale search
     common: { parameters: { command: 'search-submit' }, formInputs: { searchSong: { stringInputs: { value: [query] } } } }
   }));
   const click = (command, user = 'users/test') => r.context.onCardClick(dialogEvent(r, command, { dialogEventType: 'SUBMIT_DIALOG', user: { name: user, type: 'HUMAN' } }));
-  const oldCheck = JSON.stringify(submit('old')).match(/search-check:[a-f0-9]{64}/)[0];
-  assert.doesNotMatch(JSON.stringify(click(oldCheck, 'users/other')), /search-pick|곡을 찾는/);
+  const start = r.now();
+  const timedOut = JSON.stringify(submit('old'));
+  assert.equal(r.now() - start, 20000);
+  assert.match(timedOut, /다시 시도/);
+  assert.doesNotMatch(timedOut, /결과 보기|search-pick/);
+  const oldCheck = timedOut.match(/search-check:[a-f0-9]{64}/)[0];
+  assert.doesNotMatch(JSON.stringify(click(oldCheck, 'users/other')), /search-pick|다시 시도/);
   await w.cycle();
   const oldPick = JSON.stringify(click(oldCheck)).match(/search-pick:[a-f0-9]{64}:1/)[0];
   const newCheck = JSON.stringify(submit('new')).match(/search-check:[a-f0-9]{64}/)[0];
@@ -346,6 +351,36 @@ test('new Chat search keeps same dialog, isolates users and rejects stale search
   click(newPick);
   await w.cycle();
   assert.deepEqual(e.state.queue.map(song => song.videoId), ['s7gef3SXSbY']);
+});
+
+test('Chat search submission returns a delayed bridge result in the same private dialog', async () => {
+  const r = runtime(), e = engine(r), w = worker(e, r);
+  e.youtube.key = 'test-only';
+  await w.cycle();
+  const sleep = r.context.Utilities.sleep;
+  let resultId;
+  r.context.Utilities.sleep = ms => {
+    sleep(ms);
+    if (resultId) return;
+    const { command } = r.call('pull', { clientId: w.clientId });
+    resultId = command.id;
+    assert.equal(command.text, '검색 밤편지');
+    assert.equal(r.call('result', {
+      id: randomUUID(), commandId: resultId, user: 'users/test', space: 'spaces/test',
+      text: '검색 완료', search: { titles: ['아이유 <밤편지>'], selectionId: randomUUID(), expiresAt: r.now() + 300000 }
+    }).ok, true);
+  };
+  const response = r.context.onCardClick(dialogEvent(r, 'search-submit', {
+    dialogEventType: 'SUBMIT_DIALOG',
+    common: { parameters: { command: 'search-submit' }, formInputs: { searchSong: { stringInputs: { value: ['밤편지'] } } } }
+  }));
+  assert.equal(response.actionResponse.type, 'DIALOG');
+  const card = JSON.stringify(response);
+  assert.match(card, /나만 보임/);
+  assert.match(card, /아이유 &lt;밤편지&gt;/);
+  assert.match(card, new RegExp('search-pick:' + resultId + ':1'));
+  assert.doesNotMatch(card, /결과 보기|search-check/);
+  assert.equal(e.state.queue.length, 0);
 });
 
 test('feature feedback is stored once and exposed privately only to configured operators', async () => {

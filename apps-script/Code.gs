@@ -471,6 +471,16 @@ function jbSearchDialog(e, command, field, space, user) {
 
 function jbSearchResultDialog(p, id, space, user) {
   var result = jbRead(p, 'sp_' + id, {});
+  // Keep this submission open while the laptop works. Never hold the bridge
+  // lock here: the worker needs it to publish the result.
+  var deadline = Date.now() + 20000;
+  while (result.space === space && result.user === user &&
+      !result.search && !result.text && Date.now() - result.at < JB_TTL && Date.now() < deadline) {
+    var wait = Math.min(600, deadline - Date.now());
+    if (wait <= 0) break;
+    Utilities.sleep(wait);
+    result = jbRead(p, 'sp_' + id, {});
+  }
   var widgets = [], buttons = [jbButton('다시 검색', 'search-again')];
   var status = '검색 결과가 만료됐어. 다시 검색해 줘.';
   if (result.space === space && result.user === user && Date.now() - result.at < JB_TTL) {
@@ -485,8 +495,8 @@ function jbSearchResultDialog(p, id, space, user) {
     } else if (result.text && !result.search) {
       status = result.text;
     } else if (!result.text) {
-      status = '푸루! 곡을 찾는 중이야. 잠시 후 결과 보기를 눌러 줘.';
-      buttons.unshift(jbButton('↻ 결과 보기', 'search-check:' + id));
+      status = '후운… 음악방 응답이 늦어. 같은 검색을 다시 확인하거나 새로 검색해 줘.';
+      buttons.unshift(jbButton('다시 시도', 'search-check:' + id));
     }
   }
   widgets.unshift({ textParagraph: { text: jbHtml(status) } });
