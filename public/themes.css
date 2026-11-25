@@ -31,11 +31,11 @@ body.dashboard-page[data-theme=hachiware]{color:var(--theme-ink);background:#e7e
 
 
 /* Original artwork stays crisp: no translucent color sheet or blur on wallpaper. */
-.dance-party{display:flex;align-items:center;justify-content:space-between;gap:22px;margin-top:20px;padding:16px 18px 8px;border-top:1px dashed #d8c3a5;background:linear-gradient(110deg,#fff6dc99,#fff8fc99 55%,#edf8ff99);border-radius:0 0 18px 18px}
-.dance-intro{flex:1;min-width:130px}.dance-intro h3{font-size:24px;font-weight:500;margin:5px 0 12px}.dance-intro button{font-size:14px;padding:7px 13px;box-shadow:none}
-.dance-friends{display:flex;gap:14px;align-items:end}.dance-friend{margin:0;text-align:center;background:#fff;border:1px solid #efdfc9;border-radius:50% 50% 20px 20px;padding:5px 8px 8px;box-shadow:0 4px 0 #cdbba322;flex-shrink:0}.dance-friend img{display:block;width:112px;height:112px;object-fit:contain;background:#fff;border-radius:50%;image-rendering:auto}.dance-friend figcaption{font-size:16px;line-height:1.4}.dance-friend a{color:inherit;text-decoration:none}.dance-friend a:hover{text-decoration:underline}.dance-usagi{color:#8e6c23;border-color:#efd386}.dance-chiikawa{color:#a85476;border-color:#edbbd0}.dance-hachiware{color:#397ba3;border-color:#abd4ef}
+.dance-party{display:flex;align-items:center;justify-content:space-between;gap:22px;padding:12px 18px;border:1px solid var(--theme-line,#ead7bc);background:linear-gradient(110deg,#fff6dcf2,#fff8fcf2 55%,#edf8fff2);border-radius:18px}
+.dance-intro{flex:1;min-width:130px}.dance-intro h2{font-size:24px;font-weight:500;margin:5px 0 12px}.dance-intro button{font-size:14px;padding:7px 13px;box-shadow:none}
+.dance-friends{display:flex;gap:14px;align-items:end}.dance-friend{margin:0;text-align:center;background:#fff;border:1px solid #efdfc9;border-radius:50% 50% 20px 20px;padding:5px 8px 8px;box-shadow:0 4px 0 #cdbba322;flex-shrink:0}.dance-friend img{display:block;width:94px;height:94px;object-fit:contain;background:#fff;border-radius:50%;image-rendering:auto}.dance-friend figcaption{font-size:16px;line-height:1.4}.dance-friend a{color:inherit;text-decoration:none}.dance-friend a:hover{text-decoration:underline}.dance-usagi{color:#8e6c23;border-color:#efd386}.dance-chiikawa{color:#a85476;border-color:#edbbd0}.dance-hachiware{color:#397ba3;border-color:#abd4ef}
 body[data-theme=usagi] .dance-usagi,body[data-theme=chiikawa] .dance-chiikawa,body[data-theme=hachiware] .dance-hachiware{outline:2px solid currentColor;outline-offset:3px}
-@media(max-width:680px){.dance-party{flex-direction:column;gap:12px;padding:14px 5px 8px}.dance-intro{width:100%;display:flex;align-items:center;gap:8px;justify-content:space-between}.dance-intro h3{font-size:20px;margin:0}.dance-intro button{font-size:12px;white-space:nowrap}.dance-friends{gap:10px}.dance-friend{padding:4px 5px 7px}.dance-friend img{width:76px;height:82px}.dance-friend figcaption{font-size:15px}}
+@media(max-width:680px){.dance-party{flex-direction:column;gap:12px;padding:14px 5px 8px}.dance-intro{width:100%;display:flex;align-items:center;gap:8px;justify-content:space-between}.dance-intro h2{font-size:20px;margin:0}.dance-intro button{font-size:12px;white-space:nowrap}.dance-friends{gap:10px}.dance-friend{padding:4px 5px 7px}.dance-friend img{width:76px;height:82px}.dance-friend figcaption{font-size:15px}}
 
 
 .dashboard-page[data-theme=usagi] .theme-panel {
@@ -49,7 +49,7 @@ body[data-theme=usagi] .dance-usagi,body[data-theme=chiikawa] .dance-chiikawa,bo
   border-top-color: #d7ad61;
 }
 
-.dashboard-page[data-theme=usagi] .dance-intro h3 {
+.dashboard-page[data-theme=usagi] .dance-intro h2 {
   color: #845021;
 }
 

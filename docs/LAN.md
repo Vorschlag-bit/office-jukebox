@@ -77,3 +77,14 @@ macOS의 기본 `/usr/bin/dns-sd -P`로 서버 전용 Bonjour 이름을 광고�
 ## 페이지에서 신청
 
 [웹 신청 설정과 제한](WEB-REQUESTS.md)을 참고하세요. Chat에서 `@우사기 웹` 또는 새 메뉴의 웹 음악방 링크로 접근합니다. 회사 Wi-Fi에서만 열립니다.
+
+## 서버를 다른 컴퓨터로 이전
+
+1. 새 컴퓨터를 같은 회사 Wi-Fi에 연결하고 [Node.js 공식 LTS](https://nodejs.org/en/download)를 설치합니다. 이 버전의 프로젝트는 Node 24.22.3 이상(24 LTS) 또는 26.13.1 이상(26 LTS)을 요구합니다. 저장소의 `main`을 내려받은 뒤 새 `office-jukebox` 폴더에서 `node --version`을 확인합니다.
+2. 기존 컴퓨터에서 서버를 정상 종료합니다. 터미널에서 실행했다면 Ctrl+C를 누릅니다. 백그라운드로 실행했다면 macOS에서 `lsof -nP -iTCP:8787 -sTCP:LISTEN`으로 프로젝트의 Node 프로세스를 확인한 후 해당 PID에만 TERM 신호를 보냅니다. 리스너가 사라졌는지 확인하고, 새 컴퓨터로 이전하는 동안 두 서버를 동시에 실행하지 않습니다.
+3. 기존 설정 파일 `config.local.json`과 설정 파일 기준 `data` 폴더의 `state.json`을 새 저장소의 같은 위치에 복사합니다. 설정의 `dataDir`을 바꿨다면 그 경로를 따릅니다. 선택적으로 `state.json.bak`도 보관합니다. 이전 PID가 들어 있는 `server.lock`은 복사 대상에서 빼고, `npm run init`은 건너뜁니다. 설정에는 API 키·관리자 키·TV 연결 정보가 있으므로 접근이 제한된 사내 전달 수단을 사용합니다. TLS가 켜져 있으면 설정의 인증서와 개인키 파일도 필요합니다. 새 IP에서 다른 기기로 관리 화면을 열려면 새 IP 또는 실제 접속 이름에 맞는 인증서를 준비합니다.
+4. 새 Mac에서 `networksetup -listallhardwareports`로 실제 Wi-Fi 장치를 확인해 `lan.networkInterface`를 맞춥니다. `lan.advertise: true`, 첫 번째 `lan.hostnames` 값 `office-jukebox.local`, 포트 `8787`을 유지하면 같은 단축 주소를 계속 쓸 수 있습니다. Windows나 Linux에서는 내장 광고의 `lan.advertise`를 `false`로 설정합니다. 다른 기기에서 접속할 때는 새 컴퓨터의 사설 IP를 사용하고, 기존 `.local` 주소와 Chat 웹 바로가기를 유지하려면 회사 네트워크에서 해당 이름을 새 컴퓨터로 해석하도록 구성해야 합니다. 이 프로젝트의 Chat 바로가기는 설정의 첫 번째 유효한 `.local` 이름을 사용합니다.
+5. 새 컴퓨터의 저장소에서 `node src/main.js doctor`, `node src/main.js check-google`, `npm start` 순으로 실행합니다. 이 프로젝트에 포함된 기존 Mac 시작 파일에는 원래 컴퓨터 경로가 들어 있으므로 새 컴퓨터에서는 위 명령으로 시작합니다. 재부팅과 절전 이후에도 서버가 필요한 경우 새 컴퓨터에서 전원·절전 설정과 재실행 방법을 확인합니다.
+6. 새 컴퓨터에서 `http://127.0.0.1:8787/health`와 `/queue`를 확인하고, 같은 Wi-Fi의 다른 기기에서 공유 주소로 접속합니다. 대기곡 순서와 Google Chat의 `전체 플리`를 확인한 뒤 검색을 시험합니다. 새 Chat 서버가 기존 worker 임대를 넘겨받을 때 잠시 기다릴 수 있습니다. 같은 TV와 설정을 옮겼다면 기존 TV 코드 연결을 먼저 확인하고, 연결이 해제됐을 때만 서버 종료 후 새 컴퓨터에서 `node src/main.js pair-tv`를 실행합니다. 현재 재생이 있으면 서버는 관측을 시도하며, 실제 화면을 확인한 뒤 재시도 여부를 결정합니다.
+
+되돌려야 하면 새 서버를 먼저 종료합니다. 새 컴퓨터에서 신청을 받은 뒤라면 그 서버의 최신 `state.json`을 원래 컴퓨터에 먼저 옮겨 신청을 보존합니다. 각 컴퓨터의 LAN·TLS 설정은 해당 컴퓨터에 맞는 값을 사용합니다.
