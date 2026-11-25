@@ -203,7 +203,7 @@ test('verified receiver idle advances queued item without pretending it was a no
   const {adapter,send}=adapterFixture(t);const store=new MemoryStore();const engine=new Engine({store,youtube:{resolve:async()=>({videoId:track.videoId,title:'song'})},adapter});
   await engine.command({text:'추가 first'});await engine.command({text:'추가 next'});const next=store.state.queue[0].id;
   send(11,'nowPlaying',{videoId:track.videoId,cpn:'first',state:1});await engine.chain;
-  send(12,'nowPlaying',{});await adapter.requestStatus();send(13,'nowPlaying',{});await engine.chain;
+  await adapter.requestStatus();send(12,'nowPlaying',{});await adapter.requestStatus();send(13,'nowPlaying',{});await engine.chain;
   assert.equal(store.state.current.id,next);assert.equal(store.state.history[0].status,'tv_idle');
 });
 
@@ -324,4 +324,35 @@ test('an existing queued song gets priority when the manual video is identified 
   assert.equal(engine.state.current.id, queued);
   assert.equal(engine.state.manualReturn.videoId, 'aaaaaaaaaaa');
   assert.equal(calls.filter(call => call.name === 'setPlaylist').length, 1);
+});
+
+test('explicit receiver idle after an unconfirmed selection restores queue or BGM', async t => {
+  for (const hasQueue of [false, true]) {
+    const {adapter, send, calls} = adapterFixture(t);
+    const store = new MemoryStore();
+    store.state.current = { ...track, source: 'url', desiredState: 'playing', observedPlaying: false };
+    const engine = new Engine({store, adapter, background: { enabled: true }, youtube: {
+      resolve: async () => ({ videoId: 'aaaaaaaaaaa', title: 'queued', source: 'url' })
+    }});
+    await engine.start();
+    if (hasQueue) await engine.command({text: '추가 test'});
+    const nextId = store.state.queue[0]?.id;
+    send(11, 'playlistModified', {videoId: track.videoId});
+    send(12, 'nowPlaying', {state: 1});
+    await adapter.requestStatus();
+    send(13, 'nowPlaying', {state: 1});
+    await engine.chain;
+    assert.equal(calls.some(call => call.name === 'setPlaylist'), false);
+    send(14, 'nowPlaying', {});
+    send(15, 'nowPlaying', {});
+    await engine.chain;
+    assert.equal(calls.some(call => call.name === 'setPlaylist'), false);
+    await adapter.requestStatus();
+    send(16, 'nowPlaying', {});
+    await engine.chain;
+    assert.equal(store.state.history.at(-1).status, 'tv_idle');
+    assert.equal(store.state.current.source, hasQueue ? 'url' : 'background');
+    if (hasQueue) assert.equal(store.state.current.id, nextId);
+    assert.equal(calls.filter(call => call.name === 'setPlaylist').length, 1);
+  }
 });

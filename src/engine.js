@@ -245,7 +245,7 @@ export class Engine {
       return this.snapshot();
     });
   }
-  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, observedVideoId, observationSessionId, observedState, positionSeconds, durationSeconds }) {
+  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, verifiedSelection = false, observedVideoId, observationSessionId, observedState, positionSeconds, durationSeconds }) {
     return this.serial(async () => {
       if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId) return false;
       if (event === 'identity' && this.adapter.type === 'lounge' && /^[A-Za-z0-9_-]{11}$/.test(observedVideoId || '') && /^[a-f0-9-]{36}$/.test(observationSessionId || '')) {
@@ -291,14 +291,20 @@ export class Engine {
         if (observedState === 1) await this.dispatch();
         return true;
       }
+      if (event === 'idle' && this.adapter.type === 'lounge' && verifiedObservation) {
+        const current = this.state.current;
+        const validError = current.status !== 'error' || current.error === 'PLAYBACK_NOT_CONFIRMED';
+        if (!validError || !(current.observedPlaying || verifiedSelection) || this.state.paused || current.desiredState === 'paused') return false;
+        // Explicit receiver idle is distinct from a nonce-confirmed natural end.
+        this.archive('tv_idle');
+        this.consecutiveFailures = 0;
+        this.store.save();
+        await this.dispatch();
+        return true;
+      }
       if (this.state.current.status === 'error' && !(this.state.current.error === 'PLAYBACK_NOT_CONFIRMED' && this.adapter.type === 'lounge' && verifiedObservation && ['playing','paused'].includes(event))) return false;
       if (this.state.current.error === 'PLAYBACK_NOT_CONFIRMED' && verifiedObservation && ['playing','paused'].includes(event)) delete this.state.current.error;
       if (this.state.current.status === 'recovery_required' && !(this.adapter.type === 'lounge' && verifiedObservation && ['playing', 'paused', 'ended'].includes(event))) return false;
-      if (event === 'idle' && this.adapter.type === 'lounge' && verifiedObservation && this.state.current.observedPlaying && !this.state.paused && this.state.current.desiredState !== 'paused') {
-        // Receiver explicitly cleared its item twice. Preserve the distinction
-        // from a nonce-bound natural end (it could also be a TV-side stop).
-        this.archive('tv_idle'); this.consecutiveFailures = 0; this.store.save(); await this.dispatch(); return true;
-      }
       if (event === 'offline' || event === 'external') { this.state.current.status = 'recovery_required'; this.notify(event === 'external' ? 'TV에서 다른 영상으로 변경됐습니다. 대기열을 진행하려면 재시도 또는 다음을 선택하세요.' : '기기 연결이 끊겼습니다. 실제 재생을 확인한 뒤 재시도 또는 다음을 선택하세요.'); this.store.save(); return true; }
       if (!['playing', 'paused', 'ended', 'buffering'].includes(event)) return false;
       if (this.state.current.source === 'external_tv' && verifiedObservation && ['playing','paused'].includes(event)) { this.state.paused = event === 'paused'; this.state.current.desiredState = event === 'paused' ? 'paused' : 'playing'; }

@@ -185,8 +185,15 @@ export class LoungeAdapter {
     const target = this.target, payload = event.args[0];
     // AID restarts at zero after a new BrowserChannel session. Old sessions are
     // already fenced by LoungeClient. Do not discard the new session forever.
-    if (target && target.epoch !== this.client.epoch) { target.epoch = this.client.epoch; target.afterAid = -1; target.idleQuery = null; target.liveEpoch = null; target.adActive = false; }
+    if (target && target.epoch !== this.client.epoch) { target.epoch = this.client.epoch; target.afterAid = -1; target.idleQuery = null; target.liveEpoch = null; target.selectedInEpoch = false; target.adActive = false; }
     if (!target || !payload || typeof payload !== 'object' || event.id <= target.afterAid) return;
+    if (event.name === 'playlistModified') {
+      // The receiver can identify the selected item without reporting playback.
+      // This is context for a later idle snapshot, never proof of playing.
+      target.selectedInEpoch = payload.videoId === target.videoId;
+      target.idleQuery = null;
+      return;
+    }
     if (event.name === 'onSubtitlesTrackChanged') {
       const video = payload.videoId;
       if (!this.identityQueries || !/^[A-Za-z0-9_-]{11}$/.test(video || '') || target.adActive) return;
@@ -214,18 +221,29 @@ export class LoungeAdapter {
     if (event.name === 'nowPlaying') {
       if (this.identityConflict && payload.videoId !== target.videoId && (!payload.videoId || this.staleVideoIds.has(payload.videoId))) return;
       if (this.identityConflict && payload.videoId === target.videoId && payload.cpn) this.identityConflict = null;
-      // Some receivers clear the item completely at its end: nowPlaying {}.
-      // Confirm that actual idle snapshot on a later explicit query, after this
-      // session observed playback. Never use duration/elapsed time as an end.
-      if (!payload.videoId && !payload.cpn && (payload.state === undefined || Number(payload.state) === 0)) {
-        if (target.playing && target.lastState === 1 && target.liveEpoch === this.client.epoch && !target.adActive && !target.finished) {
-          if (target.idleQuery !== null && target.idleQuery !== undefined && this.statusQueries > target.idleQuery) {
-            target.finished = true; this.emit('idle', { verifiedObservation: true });
-          } else if (target.idleQuery === null || target.idleQuery === undefined) target.idleQuery = this.statusQueries;
+      // Two explicit idle snapshots can release an item even if the receiver
+      // only reported its selected video, as long as both are in this session.
+      const empty = Object.keys(payload).length === 0 ||
+        (payload.videoId === '' || payload.videoId === undefined) &&
+        (payload.cpn === '' || payload.cpn === undefined) &&
+        (payload.state === 0 || payload.state === '0');
+      if (empty) {
+        const sawPlaying = target.playing && target.liveEpoch === this.client.epoch;
+        const idleContext = target.lastState === 1 && sawPlaying ||
+          target.selectedInEpoch && target.lastState === undefined;
+        if (this.statusQueries > 0 && idleContext && !target.adActive && !target.finished) {
+          if (target.idleQuery != null && this.statusQueries > target.idleQuery) {
+            target.finished = true;
+            this.recordObservation();
+            this.emit('idle', { verifiedObservation: true, verifiedSelection: !sawPlaying });
+          } else if (target.idleQuery == null) {
+            target.idleQuery = this.statusQueries;
+          }
         }
         return;
       }
       target.idleQuery = null;
+      if (payload.videoId && payload.videoId !== target.videoId) target.selectedInEpoch = false;
       if (/^[A-Za-z0-9_-]{11}$/.test(payload.videoId || '') && typeof payload.cpn === 'string' && payload.cpn.length > 0 && payload.cpn.length <= 256 && !this.retiredCpns.has(payload.cpn) && [1,2,3].includes(Number(payload.state)) && (target.playing || target.observing) && (payload.videoId !== target.videoId || target.cpn && payload.cpn !== target.cpn)) {
         // Rebase observation only. Never play, seek or consume a queued request.
         if (target.cpn) this.retiredCpns.add(target.cpn);
