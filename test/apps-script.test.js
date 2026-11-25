@@ -49,7 +49,7 @@ test('Chat setup ID discovery is read-only; default deny, bot ignore, limits and
   assert.match(r.message('내정보'),/spaces\/test/); assert.match(r.message('정지'),/허용되지/); assert.equal(r.props.has('QUEUE'),false);
   r.props.set('ALLOWED_SPACES','["spaces/test"]');
   assert.match(r.message('x'.repeat(501)),/500/); assert.match(r.message('정지',undefined,'users/stranger','spaces/other'),/허용되지/);
-  const e=r.event('정지'); e.message.sender.type='BOT'; assert.match(r.context.onMessage(e).text,/지원하지/);
+  const e=r.event('정지'); e.message.sender.type='BOT'; assert.equal(Object.keys(r.context.onMessage(e)).length,0);
   const stale=r.event('정지'); r.advance(300001); assert.match(r.context.onMessage(stale).text,/만료/);
   r.props.delete('SHARED_SECRET'); assert.match(r.message('정지'),/SHARED_SECRET/);
 });
@@ -255,12 +255,14 @@ test('private dialog validates context, empty input and cancellation without enq
   const cancel=r.context.onCardClick(dialogEvent(r,'anonymous-add',{dialogEventType:'CANCEL_DIALOG'}));assert.equal(cancel.actionResponse.dialogAction.actionStatus.statusCode,'OK');
   assert.equal(r.props.has('QUEUE'),false);
 });
-test('public launch card contains no private results; replies and result dialogs are per-user', () => {
+test('launch cards, playlist replies and dialogs are private to the requesting user', () => {
   const r=runtime();
   r.props.set('r_'+r.context.jbHash('spaces/test/users/test'),JSON.stringify({at:r.now(),text:'MY_PRIVATE_RESULT'}));
   r.props.set('r_'+r.context.jbHash('spaces/test/users/other'),JSON.stringify({at:r.now(),text:'OTHER_PRIVATE_RESULT'}));
-  const launch=r.context.onMessage(r.event('익명메뉴'));assert.equal(launch.privateMessageViewer,undefined);assert.doesNotMatch(JSON.stringify(launch),/PRIVATE_RESULT|users\/test/);assert.match(JSON.stringify(launch),/OPEN_DIALOG/);
+  const launch=r.context.onMessage(r.event('익명메뉴'));assert.equal(launch.privateMessageViewer.name,'users/test');assert.match(JSON.stringify(launch),/OPEN_DIALOG/);
   const result=r.context.onCardClick(dialogEvent(r,'open-private-result'));assert.equal(result.actionResponse.type,'DIALOG');assert.match(JSON.stringify(result),/MY_PRIVATE_RESULT/);assert.doesNotMatch(JSON.stringify(result),/OTHER_PRIVATE_RESULT/);
+  assert.equal(r.context.onMessage(r.event('전체플리')).privateMessageViewer.name, 'users/test');
+  assert.equal(Object.keys(r.context.onAddedToSpace()).length, 0);
   const privateReply=r.context.onMessage(r.event('결과'));assert.equal(privateReply.privateMessageViewer.name,'users/test');
   const privateCard=r.context.onCardClick(dialogEvent(r,'메뉴',{dialogEventType:undefined}));assert.equal(privateCard.actionResponse.type,'NEW_MESSAGE');assert.equal(privateCard.privateMessageViewer.name,'users/test');
 });
@@ -271,18 +273,19 @@ test('full queue pages preserve every ordered song, hide identities, bound prope
   await w.cycle();
   let all=[];
   for(let page=0;page<50;page++) {
-    const reply=r.context.onCardClick({...r.event(''),common:{parameters:{command:`queue-page:${page}`}}});
-    assert.equal(reply.privateMessageViewer.name,'users/test');
+    const reply=r.context.onCardClick({...r.event(''),dialogEventType:'SUBMIT_DIALOG',common:{parameters:{command:`queue-dialog:${page}`}}});
+    assert.equal(reply.actionResponse.type,'DIALOG');
+    assert.equal(reply.privateMessageViewer,undefined);
     const json=JSON.stringify(reply);assert.doesNotMatch(json,/users\/private|spaces\/private|<tag>/);assert.match(json,/&lt;tag&gt;/);
-    all.push(...reply.cardsV2[0].card.sections[0].widgets.slice(1,-1).map(x=>x.textParagraph.text));
+    all.push(...reply.actionResponse.dialogAction.dialog.body.sections[0].widgets.slice(1,-1).map(x=>x.textParagraph.text));
   }
   assert.equal(all.length,500);all.forEach((row,i)=>assert.ok(row.startsWith(`${i+1}. ${i} `)));
   const oldRevision=JSON.parse(r.props.get('QUEUE_VIEW')).revision;
   assert.equal(JSON.parse(r.props.get('VIEW')).queue.length,8);
   e.state.queue=e.state.queue.slice(0,3);await w.cycle();assert.equal(r.props.has('QV_49'),false);
-  const refreshed=r.context.onCardClick({...r.event(''),common:{parameters:{command:`queue-page:49:${oldRevision}`}}});assert.match(JSON.stringify(refreshed),/첫 페이지/);
+  const refreshed=r.context.onCardClick({...r.event(''),dialogEventType:'SUBMIT_DIALOG',common:{parameters:{command:`queue-dialog:49:${oldRevision}`}}});assert.match(JSON.stringify(refreshed),/첫 페이지/);
   r.advance(31000);assert.match(JSON.stringify(r.context.onMessage(r.event('플리'))),/마지막으로/);
-  const denied=r.context.onCardClick({...r.event('',undefined,'users/test','spaces/other'),common:{parameters:{command:'queue-page:0'}}});assert.match(denied.text,/허용되지/);
+  const denied=r.context.onCardClick({...r.event('',undefined,'users/test','spaces/other'),common:{parameters:{command:'queue-open'}}});assert.match(denied.text,/허용되지/);
   e.state.queue=[];await w.cycle();assert.match(JSON.stringify(r.context.onMessage(r.event('전체플리'))),/대기곡이 없어/);
 });
 test('queue revision acknowledgement resends after bridge reset and malformed full views cannot replace cached list', async () => {
@@ -296,13 +299,13 @@ test('private search dialog returns selectable results only to their owner and e
   const open=r.context.onCardClick(dialogEvent(r,'open-anonymous'));assert.match(JSON.stringify(open),/곡명 검색|검색할 곡명/);
   const input=dialogEvent(r,'anonymous-search',{dialogEventType:'SUBMIT_DIALOG',common:{parameters:{command:'anonymous-search'},formInputs:{privateSong:{stringInputs:{value:['my song']}}}}});
   assert.equal(r.context.onCardClick(input).actionResponse.dialogAction.actionStatus.statusCode,'OK');await w.cycle();
-  const result=r.context.onCardClick(dialogEvent(r,'open-private-result'));assert.match(JSON.stringify(result),/anonymous-select:2/);assert.equal(result.text,undefined);
-  const other=dialogEvent(r,'open-private-result');other.user={name:'users/other',type:'HUMAN'};assert.doesNotMatch(JSON.stringify(r.context.onCardClick(other)),/anonymous-select|second/);
-  const pick=dialogEvent(r,'anonymous-select:2',{dialogEventType:'SUBMIT_DIALOG'});assert.equal(r.context.onCardClick(pick).actionResponse.dialogAction.actionStatus.statusCode,'OK');r.context.onCardClick(pick);await w.cycle();assert.equal(e.state.queue.length,1);assert.equal(e.state.queue[0].videoId,'s7gef3SXSbY');
+  const result=r.context.onCardClick(dialogEvent(r,'open-private-result'));const pickCommand=JSON.stringify(result).match(/anonymous-pick:[a-f0-9-]{36}:2/)[0];assert.equal(result.text,undefined);
+  const other=dialogEvent(r,'open-private-result');other.user={name:'users/other',type:'HUMAN'};assert.doesNotMatch(JSON.stringify(r.context.onCardClick(other)),/anonymous-pick|second/);
+  const pick=dialogEvent(r,pickCommand,{dialogEventType:'SUBMIT_DIALOG'});assert.equal(r.context.onCardClick(pick).actionResponse.dialogAction.actionStatus.statusCode,'OK');r.context.onCardClick(pick);await w.cycle();assert.equal(e.state.queue.length,1);assert.equal(e.state.queue[0].videoId,'s7gef3SXSbY');
 });
 test('private search remains unavailable without configured key and expired results have no selection buttons', async () => {
   const r=runtime(),w=worker(engine(r),r);await w.cycle();const input=dialogEvent(r,'anonymous-search',{dialogEventType:'SUBMIT_DIALOG',common:{parameters:{command:'anonymous-search'},formInputs:{privateSong:{stringInputs:{value:['song']}}}}});assert.equal(r.context.onCardClick(input).actionResponse.dialogAction.actionStatus.statusCode,'INVALID_ARGUMENT');assert.equal(JSON.parse(r.props.get('QUEUE') || '[]').length,0);
-  r.props.set('r_'+r.context.jbHash('spaces/test/users/test'),JSON.stringify({at:r.now()-300001,text:'1. old\n5분 이내에 선택 <번호>를 보내세요.'}));assert.doesNotMatch(JSON.stringify(r.context.onCardClick(dialogEvent(r,'open-private-result'))),/anonymous-select/);
+  r.props.set('r_'+r.context.jbHash('spaces/test/users/test'),JSON.stringify({at:r.now()-300001,text:'1. old\n5분 이내에 선택 <번호>를 보내세요.'}));assert.doesNotMatch(JSON.stringify(r.context.onCardClick(dialogEvent(r,'open-private-result'))),/anonymous-pick/);
 });
 
 test('Chat menus expose only validated local web links without privileged tokens or HTTPS-upgrading buttons',async()=>{const r=runtime(),e=engine(r),w=new AppsScriptWorker({config:config(),engine:e,now:r.now,publicUrl:'http://jukebox-test.local:8787/queue',fetcher:async(_,options)=>new Response(r.context.doPost({postData:{contents:options.body}}).text,{headers:{'Content-Type':'application/json'}}),log:()=>{}});await w.cycle();const reply=r.context.onMessage(r.event('웹'));assert.match(reply.text,/http:\/\/jukebox-test\.local:8787\/queue/);assert.equal(reply.privateMessageViewer.name,'users/test');assert.match(JSON.stringify(reply.cardsV2),/웹 음악방 열기/);assert.doesNotMatch(JSON.stringify(reply),/"openLink"|<a href=|adminToken|playerToken|test-only-not-a-live-secret/);for(const url of ['javascript:alert(1)','http://evil.example/queue','http://good.local:0/queue','http://good.local:8787/queue?adminToken=x'])assert.equal(r.context.jbWebUrl(url),null);});
@@ -358,4 +361,24 @@ test('feature feedback is stored once and exposed privately only to configured o
   assert.equal(inbox.privateMessageViewer.name, 'users/operator');
   assert.match(JSON.stringify(inbox), /&lt;기능&gt; 제안/);
   assert.equal(r.props.has('QUEUE'), false);
+});
+
+test('old result cards cannot submit a number from a newer search', async () => {
+  const r = runtime(), e = engine(r), w = worker(e, r);
+  e.youtube.key = 'test-only';
+  e.youtube.search = async title => [{ videoId: 'dQw4w9WgXcQ', title, source: 'search' }];
+  const cardPick = command => r.context.onCardClick({ ...r.event(''), common: { parameters: { command } } });
+  r.message('검색 first');
+  await w.cycle();
+  const old = JSON.stringify(r.context.onMessage(r.event('결과'))).match(/result-pick:[a-f0-9-]{36}:1/)[0];
+  r.message('검색 second');
+  await w.cycle();
+  assert.match(cardPick(old).text, /만료/);
+  assert.match(cardPick('선택 1').text, /이전 검색/);
+  await w.cycle();
+  assert.equal(e.state.queue.length, 0);
+  const current = JSON.stringify(r.context.onMessage(r.event('결과'))).match(/result-pick:[a-f0-9-]{36}:1/)[0];
+  assert.match(cardPick(current).text, /접수/);
+  await w.cycle();
+  assert.equal(e.state.queue[0].title, 'second');
 });
