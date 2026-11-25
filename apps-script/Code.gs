@@ -191,7 +191,7 @@ function jbPanel(p, space, user, message) {
   if(webUrl) widgets.push({textParagraph:{text:'🌐 웹 음악방 열기 · 검색/링크 신청<br>이 메시지 위쪽의 음악방 주소를 눌러 줘! 같은 회사 Wi-Fi에서 열려.'}});
   widgets.push({ buttonList: { buttons: [jbDialogButton('♫ 전체 플리', 'queue-open'), jbButton('↻ 상태 새로고침', '메뉴'), jbDialogButton('내 신청 결과 확인', 'open-private-result')] } });
   var sections = [{ widgets: widgets }, { header: '선곡자는 숨기고, 음악은 함께!', widgets: [
-    { textParagraph: { text: '신청 링크는 채팅창에 직접 보내지 말고 아래 비공개 신청창에 넣어 줘. 창과 결과는 본인만 볼 수 있어. 공용 화면에는 곡만 표시해!<br><br>Google과 봇 운영자는 내부 식별 정보를 처리할 수 있어. 완전한 추적 불가능 익명은 아니야.' } },
+    { textParagraph: { text: '푸루야! 검색이나 링크 신청은 아래 버튼을 눌러 줘. 함께 보는 플리에는 곡만 표시돼.<br>Google과 운영자는 내부 식별 정보를 처리할 수 있어.' } },
     { buttonList: { buttons: [jbDialogButton('비공개 신청창 열기', 'open-anonymous'), jbDialogButton('내 신청 결과 · 비공개', 'open-private-result'), jbDialogButton('기능 요청', 'feedback-open')] } }
   ] }];
   if (view && view.searchEnabled) sections[1].widgets.unshift({ buttonList: { buttons: [jbDialogButton('🔎 곡 검색', 'search-open')] } });
@@ -208,7 +208,7 @@ function jbPanel(p, space, user, message) {
     if (/^[a-f0-9-]{36}$/.test(song.id || '')) return { buttonList: { buttons: [jbButton((i+1) + '. ' + song.title.slice(0, 55) + '  × 취소', '취소 id:' + song.id)] } };
     return { textParagraph: { text: jbHtml((i+1) + '. ' + song.title) } };
   }) });
-  return { text: message + (webUrl ? '\n\n🌐 웹 음악방 · 검색/링크 신청\n'+webUrl+'\n같은 회사 Wi-Fi에서 열어 줘!' : ''), cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '우사기 음악방', subtitle: jbTone('menu', message), imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
+  return { text: message + (webUrl ? '\n\n🌐 웹 음악방 · 검색/링크 신청\n'+webUrl+'\n같은 회사 Wi-Fi에서 열어 줘!' : ''), cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '우사기 음악방', subtitle: '🔒 나만 보임', imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
 }
 function jbHandleClick(e) {
   try {
@@ -320,7 +320,9 @@ function jbDialogButton(label, command) {
   button.onClick.action.interaction = 'OPEN_DIALOG';
   return button;
 }
-function jbDialog(body) { return { actionResponse: { type: 'DIALOG', dialogAction: { dialog: { body: body } } } }; }
+function jbDialog(body) {
+  body.sections.unshift({ widgets: [{ textParagraph: { text: '<b>🔒 나만 보임</b><br>이 창과 입력 내용은 다른 채팅방 멤버에게 보이지 않아.' } }] });
+  return { actionResponse: { type: 'DIALOG', dialogAction: { dialog: { body: body } } } }; }
 function jbDialogStatus(code, text) { return { actionResponse: { type: 'DIALOG', dialogAction: { actionStatus: { statusCode: code, userFacingMessage: text.slice(0, 500) } } } }; }
 function jbAnonymousDialog(e, command, field, space, user) {
   if (e.dialogEventType === 'CANCEL_DIALOG') return jbDialogStatus('OK', '푸루. 신청하지 않고 닫았어.');
@@ -339,7 +341,7 @@ function jbAnonymousDialog(e, command, field, space, user) {
     var buttons = [jbButton('한 곡 신청', 'anonymous-add', 'privateSong'), jbButton('♫ 목록 담기', 'anonymous-playlist', 'privateSong')];
     if (view && view.searchEnabled) buttons.push(jbButton('곡명 검색', 'anonymous-search', 'privateSong'));
     return jbDialog({ sections: [{ header: '우사기 비공개 신청창', widgets: [
-      { textParagraph: { text: '푸루야! 이 창과 입력 내용은 다른 참여자에게 안 보여. 신청 결과도 비공개로 확인해 줘.<br>공용 화면에는 곡이 표시돼. Google·봇 운영자는 내부 식별 정보를 처리할 수 있어.' } },
+      { textParagraph: { text: '푸루야! 공용 플리에는 곡만 표시돼. Google과 운영자는 내부 식별 정보를 처리할 수 있어.' } },
       { textInput: { name: 'privateSong', label: view && view.searchEnabled ? 'YouTube 링크 또는 검색할 곡명' : 'YouTube 영상·재생목록 링크', hintText: view && view.searchEnabled ? '곡명은 곡명 검색 → 내 신청 결과에서 골라 줘!' : '채팅창에 보내지 말고 여기에 붙여 넣어 줘!', type: 'SINGLE_LINE' } },
       { buttonList: { buttons: buttons } }
     ] }] });

@@ -277,7 +277,7 @@ test('full queue pages preserve every ordered song, hide identities, bound prope
     assert.equal(reply.actionResponse.type,'DIALOG');
     assert.equal(reply.privateMessageViewer,undefined);
     const json=JSON.stringify(reply);assert.doesNotMatch(json,/users\/private|spaces\/private|<tag>/);assert.match(json,/&lt;tag&gt;/);
-    all.push(...reply.actionResponse.dialogAction.dialog.body.sections[0].widgets.slice(1,-1).map(x=>x.textParagraph.text));
+    all.push(...reply.actionResponse.dialogAction.dialog.body.sections[1].widgets.slice(1,-1).map(x=>x.textParagraph.text));
   }
   assert.equal(all.length,500);all.forEach((row,i)=>assert.ok(row.startsWith(`${i+1}. ${i} `)));
   const oldRevision=JSON.parse(r.props.get('QUEUE_VIEW')).revision;
