@@ -191,7 +191,7 @@ function jbPanel(p, space, user, message) {
   if(webUrl) widgets.push({textParagraph:{text:'🌐 웹 음악방 열기 · 검색/링크 신청<br>이 메시지 위쪽의 음악방 주소를 눌러 줘! 같은 회사 Wi-Fi에서 열려.'}});
   widgets.push({ buttonList: { buttons: [jbDialogButton('♫ 전체 플리', 'queue-open'), jbButton('↻ 상태 새로고침', '메뉴'), jbDialogButton('내 신청 결과 확인', 'open-private-result')] } });
   var sections = [{ widgets: widgets }, { header: '선곡자는 숨기고, 음악은 함께!', widgets: [
-    { textParagraph: { text: '푸루야! 검색이나 링크 신청은 아래 버튼을 눌러 줘. 함께 보는 플리에는 곡만 표시돼.<br>Google과 운영자는 내부 식별 정보를 처리할 수 있어.' } },
+    { textParagraph: { text: '푸루야! 검색이나 링크 신청은 아래 버튼을 눌러 줘. 함께 보는 플리에는 곡만 표시돼.' } },
     { buttonList: { buttons: [jbDialogButton('비공개 신청창 열기', 'open-anonymous'), jbDialogButton('내 신청 결과 · 비공개', 'open-private-result'), jbDialogButton('기능 요청', 'feedback-open')] } }
   ] }];
   if (view && view.searchEnabled) sections[1].widgets.unshift({ buttonList: { buttons: [jbDialogButton('🔎 곡 검색', 'search-open')] } });
@@ -341,7 +341,7 @@ function jbAnonymousDialog(e, command, field, space, user) {
     var buttons = [jbButton('한 곡 신청', 'anonymous-add', 'privateSong'), jbButton('♫ 목록 담기', 'anonymous-playlist', 'privateSong')];
     if (view && view.searchEnabled) buttons.push(jbButton('곡명 검색', 'anonymous-search', 'privateSong'));
     return jbDialog({ sections: [{ header: '우사기 비공개 신청창', widgets: [
-      { textParagraph: { text: '푸루야! 공용 플리에는 곡만 표시돼. Google과 운영자는 내부 식별 정보를 처리할 수 있어.' } },
+      { textParagraph: { text: '푸루야! 공용 플리에는 곡만 표시돼.' } },
       { textInput: { name: 'privateSong', label: view && view.searchEnabled ? 'YouTube 링크 또는 검색할 곡명' : 'YouTube 영상·재생목록 링크', hintText: view && view.searchEnabled ? '곡명은 곡명 검색 → 내 신청 결과에서 골라 줘!' : '채팅창에 보내지 말고 여기에 붙여 넣어 줘!', type: 'SINGLE_LINE' } },
       { buttonList: { buttons: buttons } }
     ] }] });
