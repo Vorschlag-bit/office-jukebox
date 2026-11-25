@@ -68,7 +68,7 @@ export class YouTube {
   async resolve(query, embedded = true) {
     return (await this.search(query, embedded))[0];
   }
-  async search(query, embedded = true) {
+  async search(query, embedded = true, limit = 5) {
     check(typeof query === 'string' && query.trim().length > 0 && query.length <= 300, 'QUERY', '곡명 또는 유튜브 URL을 300자 이내로 입력하세요.');
     query = query.trim().replace(/\s+/g, ' ');
     const id = videoId(query);
@@ -94,16 +94,16 @@ export class YouTube {
     check(this.key, 'YOUTUBE_KEY', '곡명 검색에는 YouTube API 키가 필요합니다. URL 직접 신청은 키 없이 가능합니다.');
     const cacheKey = `${embedded}:${query.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
-    if (hit && hit.expires > this.now()) return structuredClone(hit.tracks);
+    if (hit && hit.expires > this.now()) return structuredClone(hit.tracks.slice(0, limit));
     check(this.now() >= this.searchBlockedUntil, 'YOUTUBE_QUOTA', 'YouTube 검색 한도에 도달했어요. 잠시 후 다시 검색하거나 링크로 신청해 줘.', 429);
-    if (this.searchPending.has(cacheKey)) return structuredClone(await this.searchPending.get(cacheKey));
+    if (this.searchPending.has(cacheKey)) return structuredClone((await this.searchPending.get(cacheKey)).slice(0, limit));
     const pending = this.fetchSearch(query, embedded, cacheKey);
     this.searchPending.set(cacheKey, pending);
-    try { return structuredClone(await pending); }
+    try { return structuredClone((await pending).slice(0, limit)); }
     finally { this.searchPending.delete(cacheKey); }
   }
   async fetchSearch(query, embedded, cacheKey) {
-    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '5', q: query, safeSearch: 'moderate' });
+    const params = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '10', fields: 'items(id/videoId,snippet(title,channelTitle))', q: query, safeSearch: 'moderate' });
     if (embedded) { params.set('videoEmbeddable', 'true'); params.set('videoSyndicated', 'true'); }
     let response;
     try { response = await this.fetcher(`https://www.googleapis.com/youtube/v3/search?${params}`, { redirect: 'error', headers: { 'x-goog-api-key': this.key }, signal: AbortSignal.timeout(10000) }); }
@@ -124,9 +124,13 @@ export class YouTube {
     }
     check(Array.isArray(data?.items), 'UPSTREAM_FORMAT', 'YouTube 검색 결과 형식이 달라졌어요.', 502);
     const seen = new Set();
-    const items = data.items.filter(x => { const id = videoId(x?.id?.videoId || ''); if (!id || seen.has(id)) return false; seen.add(id); return true; }).slice(0, 5);
+    const items = data.items.filter(x => { const id = videoId(x?.id?.videoId || ''); if (!id || seen.has(id)) return false; seen.add(id); return true; }).slice(0, 10);
     check(items.length, 'NOT_FOUND', '검색 결과가 없습니다. 유튜브 URL로 신청해 주세요.');
-    const tracks = items.map(item => ({ videoId: item.id.videoId, title: decodeTitle(String(item.snippet?.title || query)).replace(/\s+/g, ' ').slice(0, 180), source: 'search' }));
+    const tracks = items.map(item => {
+      const title = decodeTitle(String(item.snippet?.title || query)).replace(/\s+/g, ' ').slice(0, 180);
+      const channelTitle = decodeTitle(String(item.snippet?.channelTitle || '')).replace(/\s+/g, ' ').trim().slice(0, 100);
+      return { videoId: item.id.videoId, title, source: 'search', ...(channelTitle ? { channelTitle } : {}) };
+    });
     if (this.cache.size >= 200) this.cache.delete(this.cache.keys().next().value);
     this.cache.set(cacheKey, { tracks, expires: this.now() + 3600000 });
     return structuredClone(tracks);

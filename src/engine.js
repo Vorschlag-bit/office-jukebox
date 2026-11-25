@@ -81,7 +81,7 @@ export class Engine {
     }
     this.store.save();
   }
-  async command({ text, user = 'local', operator = false, playbackControl = false, eventId, space, thread, selectionId, includeChoices = false }) {
+  async command({ text, user = 'local', operator = false, playbackControl = false, eventId, space, thread, selectionId, includeChoices = false }, webSong) {
     return this.serial(async () => {
       if (eventId && Object.hasOwn(this.state.seen, eventId)) return includeChoices ? structuredClone(this.state.seen[eventId].publicResult || {text:this.state.seen[eventId].reply}) : this.state.seen[eventId].reply;
       check(typeof text === 'string' && text.length <= 500, 'COMMAND', '명령은 500자 이내여야 합니다.');
@@ -98,7 +98,9 @@ export class Engine {
       };
       const listCommand = ['목록', '재생목록', 'playlist'].includes(verb.toLowerCase());
       const plainPlaylist = ['재생', '추가', 'play', 'add'].includes(verb.toLowerCase()) && playlistId(arg) && new URL(arg).pathname === '/playlist';
-      if (listCommand || plainPlaylist) {
+      if (webSong) {
+        await append(webSong);
+      } else if (listCommand || plainPlaylist) {
         const [url, startText = '1', ...extra] = parts;
         check(!extra.length && /^[1-9][0-9]{0,2}$/.test(startText), 'PLAYLIST_START', '목록 <링크> [시작번호] 형식으로 입력하세요. 시작번호는 1~100입니다.');
         const start = Number(startText);

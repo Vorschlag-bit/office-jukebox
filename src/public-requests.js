@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { check, equalSecret, videoId } from './util.js';
 import { validLocalHostname } from './security.js';
 import { playlistId } from './youtube.js';
@@ -27,22 +27,49 @@ export function createPublicRequests({engine,config,now=Date.now}) {
     const id=cookieIdentity(req),session=id&&sessions.get(id);check(session&&session.expires>now()&&equalSecret(req.headers['x-jukebox-csrf'],session.csrf),'REQUEST_SESSION','신청창 연결이 만료됐어요. 다시 연결한 뒤 시도해 주세요.',401);
     check(body&&['search','add','playlist','select'].includes(body.action),'REQUEST_ACTION','검색·링크 신청·목록 신청·후보 선택만 사용할 수 있습니다.');
     check(typeof body.requestId==='string'&&/^[a-f0-9]{32}$/.test(body.requestId),'REQUEST_ID','신청 식별자를 확인해 주세요.');
-    const user='web-'+sign(id),eventId=user+'-'+body.requestId;
+    const user='web-'+sign(id);
+    let eventId=user+'-'+body.requestId;
+    if(body.action==='select'){
+      check(Number.isInteger(body.index)&&body.index>=1&&body.index<=10&&typeof body.selectionId==='string'&&/^[a-f0-9-]{36}$/.test(body.selectionId),'CHOICE','검색 결과에서 노래를 골라 주세요.');
+      eventId=user+'-choice-'+body.selectionId+'-'+body.index;
+    }
     // A completed retry is answered before quotas or candidate state are touched.
     const previous=engine.state.seen[eventId];if(previous?.publicResult)return structuredClone(previous.publicResult);
-    const ip=req.socket.remoteAddress||'unknown';limit('post:'+ip,8,60000);
+    const ip=req.socket.remoteAddress||'unknown';
+    if(body.action!=='search')limit('post:'+ip,8,60000);
     let text;
     if(body.action==='select'){
-      check(Number.isInteger(body.index)&&body.index>=1&&body.index<=5&&typeof body.selectionId==='string'&&/^[a-f0-9-]{36}$/.test(body.selectionId),'CHOICE','검색 결과에서 노래를 골라 주세요.');text='선택 '+body.index;
+      const search=session.search;
+      check(search?.selectionId===body.selectionId&&search.expiresAt>now(),'CHOICE_EXPIRED','검색 결과가 만료됐어요. 같은 곡명으로 다시 검색해 주세요.',409);
+      const song=search.choices[body.index-1];check(song,'CHOICE','검색 결과에서 노래를 골라 주세요.');
+      return engine.command({text:'선택 '+body.index,user,eventId,includeChoices:true},{videoId:song.videoId,title:song.title,source:'search'});
     }else{
       check(typeof body.query==='string'&&body.query.trim().length>0&&body.query.length<=300&&!/[\r\n]/.test(body.query),'QUERY','링크 또는 곡명을 1~300자로 입력해 주세요.');const query=body.query.trim();
       if(body.action==='search'){
         check(engine.youtube.key,'YOUTUBE_KEY','곡명 검색이 아직 연결되지 않았어요. YouTube 링크로 신청해 주세요.');
         check(!/^https?:\/\//i.test(query),'QUERY','검색할 가수와 곡명을 입력해 주세요. 링크는 링크 신청을 이용해 주세요.');
-        limit('search:'+ip,12,3600000);if(now()-globalSearch.since>=3600000)globalSearch={since:now(),count:0};check(globalSearch.count<30,'SEARCH_LIMIT','웹 검색 요청이 많아요. 잠시 링크 신청을 이용해 주세요.',429);globalSearch.count++;text='검색 '+query;
+        if(session.search?.requestId===body.requestId&&session.search.expiresAt>now())return session.search;
+        let pending=session.pendingSearch;
+        if(pending?.requestId!==body.requestId){
+          limit('search:'+ip,12,3600000);if(now()-globalSearch.since>=3600000)globalSearch={since:now(),count:0};check(globalSearch.count<30,'SEARCH_LIMIT','웹 검색 요청이 많아요. 잠시 링크 신청을 이용해 주세요.',429);globalSearch.count++;
+          session.search=null;
+          pending={requestId:body.requestId,promise:engine.youtube.search(query,engine.adapter.type==='browser',10)};
+          session.pendingSearch=pending;
+        }
+        try {
+          const songs=await pending.promise;
+          if(session.pendingSearch===pending){
+            const choices=songs.slice(0,10).map(({videoId,title,channelTitle})=>({videoId,title,channelTitle}));
+            session.search={requestId:body.requestId,selectionId:randomUUID(),expiresAt:now()+300000,choices};
+          }
+          check(session.search?.requestId===body.requestId,'SEARCH_REPLACED','새 검색 결과를 사용해 주세요.',409);
+          return session.search;
+        } finally {
+          if(session.pendingSearch===pending)session.pendingSearch=null;
+        }
       }else{let parsed;try{parsed=new URL(query);}catch{}check(parsed&&!parsed.username&&!parsed.password&&!parsed.port,'URL','올바른 HTTPS YouTube 링크를 입력해 주세요.');check(/^https:\/\//i.test(query) && (body.action==='playlist'?!!playlistId(query):!!videoId(query)),'URL','올바른 HTTPS YouTube 영상 또는 재생목록 링크를 입력해 주세요.');text=(body.action==='playlist'?'목록 ':'추가 ')+query;}
     }
-    return engine.command({text,user,eventId,selectionId:body.action==='select'?body.selectionId:undefined,includeChoices:true});
+    return engine.command({text,user,eventId,includeChoices:true});
   }
   return {enabled,session,request};
 }

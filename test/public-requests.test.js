@@ -12,3 +12,35 @@ test('web links, search and choice are isolated, idempotent, unprivileged and bo
 test('public writes reject missing CSRF, forged origins, malformed links and old search selections',async t=>{const f=await fixture(t),s=await f.session();assert.equal((await f.post(s,{action:'add',query:video},{'X-Jukebox-CSRF':''})).status,401);assert.equal((await f.post(s,{action:'add',query:video},{Origin:'http://evil.example'})).status,403);assert.equal((await f.req('/api/public/session',{headers:{'Sec-Fetch-Site':'cross-site'}})).status,403);assert.equal((await f.post(s,{action:'add',query:'https://evil.example/video'})).status,400);const old=(await f.post(s,{action:'search',query:'first'})).data;await f.post(s,{action:'search',query:'second'});assert.equal((await f.post(s,{action:'select',index:1,selectionId:old.selectionId})).data.error,'CHOICE_EXPIRED');assert.equal(f.engine.state.queue.length,0);});
 test('stable signed visitor identity preserves deduplication and limits across HTTP listener replacement',async t=>{const store=new MemoryStore(),f=await fixture(t,true,store),s=await f.session(),body={action:'add',query:video,requestId:randomBytes(16).toString('hex')};assert.equal((await f.post(s,body)).status,200);const g=await fixture(t,true,store);assert.equal((await g.post(s,body)).status,401);const again=await g.session(s.cookie);assert.equal(again.cookie,s.cookie);assert.equal((await g.post(again,body)).status,200);assert.equal(g.engine.state.queue.length,1);assert.equal((await g.post(again,{action:'add',query:video})).status,200);assert.equal((await g.post(again,{action:'add',query:video})).data.error,'USER_LIMIT');});
 test('repeated public writes hit an independent per-IP quota even when command validation fails',async t=>{const f=await fixture(t),s=await f.session();for(let i=0;i<8;i++)assert.equal((await f.post(s,{action:'add',query:'bad link'})).status,400);assert.equal((await f.post(s,{action:'add',query:video})).status,429);});
+
+test('web search returns while playback is busy and several candidates can be requested once each', async t => {
+  const f = await fixture(t);
+  const visitor = await f.session();
+  const { promise, resolve } = Promise.withResolvers();
+  const playback = f.engine.serial(() => promise);
+  try {
+    f.engine.youtube.search = async (_, embedded, limit) => {
+      assert.equal(embedded, true);
+      assert.equal(limit, 10);
+      return Array.from({ length: 10 }, (_, index) => ({
+        videoId: 'aaaaaaaaaa' + index,
+        title: 'Song ' + index,
+        channelTitle: 'Test channel'
+      }));
+    };
+    const result = await f.post(visitor, { action: 'search', query: 'song' });
+    assert.equal(result.status, 200);
+    assert.equal(result.data.choices.length, 10);
+    assert.equal(result.data.choices[9].channelTitle, 'Test channel');
+    assert.equal(f.engine.state.queue.length, 0);
+    resolve();
+    const choice = { action: 'select', index: 10, selectionId: result.data.selectionId };
+    for (const index of [10, 10, 1]) {
+      assert.equal((await f.post(visitor, { ...choice, index })).status, 200);
+    }
+    assert.deepEqual(f.engine.state.queue.map(song => song.videoId), ['aaaaaaaaaa9', 'aaaaaaaaaa0']);
+  } finally {
+    resolve();
+    await playback;
+  }
+});

@@ -1,14 +1,164 @@
 'use strict';
-(function(){
-  var form=document.getElementById('public-request-form'),query=document.getElementById('public-query'),submit=document.getElementById('public-submit'),choices=document.getElementById('public-choices'),section=document.getElementById('public-request-panel');
-  var csrf=null,canSearch=false,busy=false,pending=null;
-  function requestId(){var bytes=new Uint8Array(16);window.crypto.getRandomValues(bytes);return Array.prototype.map.call(bytes,function(b){return b.toString(16).padStart(2,'0');}).join('');}
-  function message(text,error,seed){window.MusicTheme.feedback(text,seed||text,error,'public-feedback');document.getElementById('public-feedback').className=error?'feedback error':'feedback success';}
-  function update(){submit.disabled=busy;submit.textContent=busy?'처리 중…':/^https:\/\//i.test(query.value.trim())?'링크 신청':canSearch?'곡명 검색':'링크 신청';}
-  async function connect(){var response=await fetch('/api/public/session',{credentials:'same-origin',cache:'no-store'}),data=await response.json();if(!response.ok)throw Object.assign(Error(data.message||'신청창에 연결하지 못했어요.'),{code:data.error});csrf=data.csrfToken;canSearch=data.searchEnabled;section.hidden=false;query.placeholder=canSearch?'가수·곡명 검색 또는 YouTube 링크 붙여 넣기':'YouTube 영상·재생목록 링크 붙여 넣기';update();}
-  async function send(body,retry){var response=await fetch('/api/public/request',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Jukebox-CSRF':csrf},body:JSON.stringify(body)}),data=await response.json();if(!response.ok){if(response.status===401&&data.error==='REQUEST_SESSION'&&!retry){await connect();return send(body,true);}throw Object.assign(Error(data.message||'신청을 확인하지 못했어요.'),{code:data.error,status:response.status});}return data;}
-  function render(result){choices.textContent='';if(!result.choices)return;var note=document.createElement('p');note.className='muted';note.setAttribute('data-tone-key','choiceHint');note.textContent=window.MusicTheme.text('choiceHint');choices.appendChild(note);result.choices.forEach(function(song,index){var row=document.createElement('div'),img=document.createElement('img'),title=document.createElement('span'),button=document.createElement('button');row.className='public-choice';img.src='https://i.ytimg.com/vi/'+encodeURIComponent(song.videoId)+'/mqdefault.jpg';img.alt='';title.textContent=(index+1)+'. '+song.title;button.type='button';button.className='secondary';button.textContent='＋ 신청';button.onclick=function(){perform({action:'select',index:index+1,selectionId:result.selectionId});};row.appendChild(img);row.appendChild(title);row.appendChild(button);choices.appendChild(row);});}
-  async function perform(payload){if(busy)return;busy=true;update();choices.querySelectorAll('button').forEach(function(button){button.disabled=true;});var key=JSON.stringify(payload);if(!pending||pending.key!==key)pending={key:key,body:Object.assign({requestId:requestId()},payload)};var body=pending.body;try{var result=await send(body);pending=null;message(payload.action==='search'?window.MusicTheme.text('searchFound'):result.text,false,body.requestId);render(result);if(payload.action!=='search')query.value='';if(typeof loadQueue==='function')loadQueue();}catch(error){message('오류: '+error.message+(error.code?' ['+error.code+']':''),true,body.requestId);if(error.status&&error.status<500&&error.status!==429)pending=null;}finally{busy=false;update();choices.querySelectorAll('button').forEach(function(button){button.disabled=false;});}}
-  form.onsubmit=function(event){event.preventDefault();var text=query.value.trim();if(!text)return query.focus();var action='search';if(/^https:\/\//i.test(text)){try{action=new URL(text).pathname==='/playlist'?'playlist':'add';}catch(_){action='add';}}else if(!canSearch){message('곡명 검색은 아직 연결 전이에요. YouTube 링크를 붙여 넣어 주세요.',true);return;}perform({action:action,query:text});};query.oninput=update;
-  connect().catch(function(error){document.getElementById('public-request-unavailable').hidden=false;document.getElementById('public-request-unavailable').textContent=error.message;});
+(function () {
+  const byId = id => document.getElementById(id);
+  const form = byId('public-request-form');
+  const input = byId('public-query');
+  const submit = byId('public-submit');
+  const panel = byId('public-request-panel');
+  const feedback = byId('public-feedback');
+  const results = byId('public-results');
+  const choices = byId('public-choices');
+  const fallback = byId('public-youtube-search');
+  let csrf, canSearch, busy = false, pending;
+
+  function requestId() {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function message(text, kind = '') {
+    feedback.className = 'feedback' + (kind ? ' ' + kind : '');
+    feedback.textContent = text;
+  }
+
+  function inputValue() {
+    const text = input.value.trim();
+    const link = text.match(/https?:\/\/[^\s<>]+/i)?.[0];
+    if (!link) return { action: 'search', query: text };
+    let playlist = false;
+    try { playlist = new URL(link).pathname === '/playlist'; } catch {}
+    return { action: playlist ? 'playlist' : 'add', query: link };
+  }
+
+  function update() {
+    const { action, query } = inputValue();
+    submit.disabled = busy || !query;
+    submit.textContent = action === 'playlist' ? '목록 신청' : action === 'add' || !canSearch ? '링크 신청' : '검색';
+    choices.querySelectorAll('button').forEach(button => {
+      button.disabled = busy || button.dataset.added === 'true';
+    });
+  }
+
+  async function connect() {
+    const response = await fetch('/api/public/session', { credentials: 'same-origin', cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw Error(data.message || '신청창에 연결하지 못했어요.');
+    csrf = data.csrfToken;
+    canSearch = data.searchEnabled;
+    input.placeholder = canSearch ? '예: 아이유 밤편지' : 'YouTube 영상·재생목록 링크';
+    panel.hidden = false;
+    update();
+  }
+
+  async function send(body, retry = true) {
+    const response = await fetch('/api/public/request', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Jukebox-CSRF': csrf },
+      body: JSON.stringify(body)
+    });
+    const data = await response.json();
+    if (retry && response.status === 401 && data.error === 'REQUEST_SESSION') {
+      await connect();
+      return send(body, false);
+    }
+    if (!response.ok) throw Object.assign(Error(data.message || '신청을 처리하지 못했어요.'), { status: response.status, code: data.error });
+    return data;
+  }
+
+  function render(query, result) {
+    choices.replaceChildren();
+    byId('public-results-title').textContent = '“' + query + '” 검색 결과 ' + result.choices.length + '개';
+    result.choices.forEach((song, index) => {
+      const row = document.createElement('li');
+      const img = document.createElement('img');
+      const info = document.createElement('div');
+      const title = document.createElement('a');
+      const channel = document.createElement('small');
+      const button = document.createElement('button');
+      row.className = 'public-choice';
+      img.src = 'https://i.ytimg.com/vi/' + encodeURIComponent(song.videoId) + '/mqdefault.jpg';
+      img.alt = '';
+      img.loading = index < 3 ? 'eager' : 'lazy';
+      title.href = 'https://www.youtube.com/watch?v=' + encodeURIComponent(song.videoId);
+      title.target = '_blank';
+      title.rel = 'noopener noreferrer';
+      title.textContent = song.title;
+      info.append(title);
+      if (song.channelTitle) {
+        channel.textContent = song.channelTitle;
+        info.append(channel);
+      }
+      button.type = 'button';
+      button.className = 'secondary';
+      button.textContent = '＋ 신청';
+      button.setAttribute('aria-label', song.title + ' 신청');
+      button.onclick = () => perform({ action: 'select', index: index + 1, selectionId: result.selectionId }, button);
+      row.append(img, info, button);
+      choices.append(row);
+    });
+    results.hidden = false;
+  }
+
+  function showFallback(query) {
+    fallback.href = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(query);
+    fallback.hidden = false;
+  }
+
+  async function perform(payload, button) {
+    if (busy) return;
+    const searching = payload.action === 'search';
+    busy = true;
+    if (searching) results.hidden = true;
+    fallback.hidden = true;
+    message(searching ? 'YouTube에서 찾는 중…' : '대기열에 담는 중…');
+    update();
+    const key = JSON.stringify(payload);
+    if (pending?.key !== key) pending = { key, body: { requestId: requestId(), ...payload } };
+    try {
+      const result = await send(pending.body);
+      pending = null;
+      if (searching) {
+        render(payload.query, result);
+        message(result.choices.length + '곡을 찾았어. 듣고 싶은 곡 옆에 신청을 눌러 줘!', 'success');
+      } else {
+        message(result.text, 'success');
+        if (button) {
+          button.dataset.added = 'true';
+          button.textContent = '✓ 신청 완료';
+          button.setAttribute('aria-label', '신청 완료');
+        } else if (inputValue().query === payload.query) input.value = '';
+        if (typeof loadQueue === 'function') loadQueue();
+      }
+    } catch (error) {
+      message(error.status ? error.message : '연결이 끊겼어요. 잠시 후 다시 눌러 주세요.', 'error');
+      if (error.status && error.status < 500 && error.status !== 429) pending = null;
+      if (searching) showFallback(payload.query);
+      if (error.code === 'CHOICE_EXPIRED') {
+        results.hidden = true;
+        input.focus();
+      }
+    } finally {
+      busy = false;
+      update();
+    }
+  }
+
+  form.onsubmit = event => {
+    event.preventDefault();
+    const payload = inputValue();
+    if (!payload.query) return input.focus();
+    if (payload.action === 'search' && !canSearch) {
+      message('지금은 YouTube 링크로 신청해 줘.', 'error');
+      showFallback(payload.query);
+      return;
+    }
+    void perform(payload);
+  };
+  input.oninput = update;
+
+  connect().catch(error => {
+    const unavailable = byId('public-request-unavailable');
+    unavailable.hidden = false;
+    unavailable.textContent = error.message;
+  });
 })();

@@ -180,6 +180,8 @@ function jbPanel(p, space, user, message) {
   var view = jbRead(p, 'VIEW', null), fresh = view && Date.now() - view.at < 30000;
   var statusNames = { playing: '재생 중 · 우라라라~♪', paused: '일시정지 · 후운~ 쉬어가자', blocked: '화면에서 재생 허용이 필요해요', sent_unconfirmed: '재생 준비 중', dispatching: '재생 준비 중', error: '재생 오류 · 다시 재생 또는 다음 곡', recovery_required: '서버가 복구됐어요 · 다시 재생을 눌러 주세요' };
   var widgets = [];
+  var webUrl = view && jbWebUrl(view.webUrl);
+  if (webUrl) widgets.push({ textParagraph: { text: '<b>🌐 웹 음악방 열기</b><br>위 주소에서 바로 검색하고 곡을 골라 줘! 회사 Wi-Fi에서 열려.' } });
   if (view) {
     var summary = fresh ? (view.current ? '♫ ' + view.current.title + '\n' + (statusNames[view.current.status] || view.current.status) : '쥬르리… 첫 신청곡을 기다리는 중!') : '노트북 연결이 잠시 끊겼어요. 서버가 켜져 있는지 확인해 주세요.';
     if (view.paused) summary += '\n대기열 일시정지 · 계속 버튼으로 다시 시작';
@@ -187,9 +189,7 @@ function jbPanel(p, space, user, message) {
     if (view.queueCount > view.queue.length) summary += '\n외 ' + (view.queueCount-view.queue.length) + '곡';
     widgets.push({ textParagraph: { text: jbHtml(summary) } });
   }
-  var webUrl = view && jbWebUrl(view.webUrl);
-  if(webUrl) widgets.push({textParagraph:{text:'🌐 웹 음악방 열기 · 검색/링크 신청<br>이 메시지 위쪽의 음악방 주소를 눌러 줘! 같은 회사 Wi-Fi에서 열려.'}});
-  widgets.push({ buttonList: { buttons: [jbDialogButton('♫ 전체 플리', 'queue-open'), jbButton('↻ 상태 새로고침', '메뉴'), jbDialogButton('내 신청 결과 확인', 'open-private-result')] } });
+  widgets.push({ buttonList: { buttons: [jbDialogButton('♫ 전체 플리', 'queue-open'), jbButton('↻ 상태 새로고침', '메뉴')] } });
   var sections = [{ widgets: widgets }, { header: '선곡자는 숨기고, 음악은 함께!', widgets: [
     { textParagraph: { text: '푸루야! 검색이나 링크 신청은 아래 버튼을 눌러 줘. 함께 보는 플리에는 곡만 표시돼.' } },
     { buttonList: { buttons: [jbDialogButton('비공개 신청창 열기', 'open-anonymous'), jbDialogButton('내 신청 결과 · 비공개', 'open-private-result'), jbDialogButton('기능 요청', 'feedback-open')] } }
@@ -208,7 +208,7 @@ function jbPanel(p, space, user, message) {
     if (/^[a-f0-9-]{36}$/.test(song.id || '')) return { buttonList: { buttons: [jbButton((i+1) + '. ' + song.title.slice(0, 55) + '  × 취소', '취소 id:' + song.id)] } };
     return { textParagraph: { text: jbHtml((i+1) + '. ' + song.title) } };
   }) });
-  return { text: message + (webUrl ? '\n\n🌐 웹 음악방 · 검색/링크 신청\n'+webUrl+'\n같은 회사 Wi-Fi에서 열어 줘!' : ''), cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '우사기 음악방', subtitle: '🔒 나만 보임', imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
+  return { text: (webUrl ? '🌐 웹에서 바로 검색·신청 · 회사 Wi-Fi\n' + webUrl + '\n\n' : '') + message, cardsV2: [{ cardId: 'jukebox-menu', card: { header: { title: '우사기 음악방', subtitle: '🔒 나만 보임', imageUrl: 'https://raw.githubusercontent.com/Vorschlag-bit/office-jukebox/13372d5993a41d405521e5d24e2a642125c757a1/public/avatar.png', imageType: 'CIRCLE' }, sections: sections } }] };
 }
 function jbHandleClick(e) {
   try {
