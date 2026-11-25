@@ -68,12 +68,13 @@ function jbHandleMessage(e) {
       // Save command before dedup marker: an interrupted handler must not silently lose it.
       jbWrite(p, 'q_' + id, record); if (ids.indexOf(id) < 0) ids.push(id); jbWrite(p, 'QUEUE', ids);
       jbRemember(p, 'SEEN', 's_', id, { at: now }, 100, 86400000, now);
+      try { CacheService.getScriptCache().put('JUKEBOX_QUEUE_WAKE', id, 15); } catch (_) { /* The next pull still reads the queue. */ }
       return e.jukeboxDialog ? { accepted: true } : jbPanel(p, space, u.name, '접수했습니다. 보통 5~10초 안에 처리해요. 아래 결과 확인 버튼으로 진행 상황을 볼 수 있어요.');
     });
   } catch (_) { return { text: '중계가 일시 중단되었습니다. 잠시 후 재시도하거나 Apps Script 설정·할당량을 확인하세요.' }; }
 }
 function doPost(e) {
-  var result;
+  var result, waiting;
   try {
     var body = e && e.postData && e.postData.contents;
     if (typeof body !== 'string' || body.length > 240000) throw Error('BODY');
@@ -116,19 +117,41 @@ function doPost(e) {
           var operators = JSON.stringify(d.view.feedbackOperators);
           if (d.view.feedbackOperators.every(function(user) { return user.length <= 150; }) && p.getProperty('FEEDBACK_OPERATORS') !== operators) p.setProperty('FEEDBACK_OPERATORS', operators);
         }
-        if (!ids.length) return { ok:true,command:null,queueRevision:queueRevision };
-        var c = jbRead(p,'q_'+ids[0],null);
-        if (c.until > now) return { ok:true,command:null,queueRevision:queueRevision };
-        c.lease = Utilities.getUuid(); c.until = now+30000; jbWrite(p,'q_'+c.id,c);
-        return { ok:true,command:c,queueRevision:queueRevision };
+        if (!ids.length && d.waitForCommand === true) waiting = { clientId: d.clientId, wake: cache.get('JUKEBOX_QUEUE_WAKE') };
+        return { ok:true,command:jbLeaseCommand(p, ids, now),queueRevision:queueRevision };
       }
       var c = jbRead(p,'q_'+d.id,null);
       if (c && (c.lease !== d.lease || c.until < now)) throw Error('LEASE');
       if (c) { jbWrite(p,'QUEUE',ids.filter(function(id) { return id !== d.id; })); p.deleteProperty('q_'+d.id); }
       return { ok:true };
     });
+    if (waiting) {
+      var deadline = Date.now() + 5000, cache = CacheService.getScriptCache();
+      while (Date.now() < deadline) {
+        if (cache.get('JUKEBOX_QUEUE_WAKE') !== waiting.wake) {
+          result.command = jbLocked(function(p) {
+            var at = Date.now(), worker = jbRead(p, 'WORKER', null);
+            if (!worker || worker.id !== waiting.clientId || worker.until <= at) return null;
+            return jbLeaseCommand(p, jbIndex(p, 'QUEUE', 'q_', JB_TTL, at), at);
+          });
+          if (result.command) break;
+          waiting.wake = cache.get('JUKEBOX_QUEUE_WAKE');
+        }
+        Utilities.sleep(300);
+      }
+    }
   } catch (_) { result = { ok:false, error:'BRIDGE_REJECTED' }; }
   return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function jbLeaseCommand(p, ids, now) {
+  if (!ids.length) return null;
+  var command = jbRead(p, 'q_' + ids[0], null);
+  if (command.until > now) return null;
+  command.lease = Utilities.getUuid();
+  command.until = now + 30000;
+  jbWrite(p, 'q_' + command.id, command);
+  return command;
 }
 
 function jbHtml(value) { return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>'); }
@@ -473,10 +496,10 @@ function jbSearchResultDialog(p, id, space, user) {
   var result = jbRead(p, 'sp_' + id, {});
   // Keep this submission open while the laptop works. Never hold the bridge
   // lock here: the worker needs it to publish the result.
-  var deadline = Date.now() + 20000;
+  var deadline = Date.now() + 5600;
   while (result.space === space && result.user === user &&
       !result.search && !result.text && Date.now() - result.at < JB_TTL && Date.now() < deadline) {
-    var wait = Math.min(600, deadline - Date.now());
+    var wait = Math.min(250, deadline - Date.now());
     if (wait <= 0) break;
     Utilities.sleep(wait);
     result = jbRead(p, 'sp_' + id, {});

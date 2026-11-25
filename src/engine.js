@@ -186,7 +186,8 @@ export class Engine {
           reply = stop ? (this.adapter.type === 'browser' ? '재생을 멈추고 대기열을 비웠어요.' : '정지 명령 전송 및 대기열 비움 완료. 기본 앱은 현장 정지를 확인하세요.') : '다음 곡으로 이동합니다.';
         }
       } else reply = '명령: 추가 <곡명/URL> · 목록 <재생목록 링크> [시작번호] · 검색 <곡명> · 선택 <번호> · 취소 <대기번호> · 대기열 · 상태 · 다음 · 정지 · 일시정지 · 계속 · 재시도 · 확인. 추가는 검색 첫 결과를 신청합니다.';
-      const publicResult = includeChoices ? { text: reply, ...(['검색','search'].includes(verb.toLowerCase()) ? { choices: this.state.candidates[user].songs.map(x=>({videoId:x.videoId,title:x.title})), selectionId: this.state.candidates[user].selectionId, expiresAt: this.state.candidates[user].expiresAt } : {}) } : undefined;
+      const searching = ['검색','search'].includes(verb.toLowerCase());
+      const publicResult = includeChoices ? { text: reply, ...(searching ? { choices: this.state.candidates[user].songs.map(x=>({videoId:x.videoId,title:x.title})), selectionId: this.state.candidates[user].selectionId, expiresAt: this.state.candidates[user].expiresAt } : {}) } : undefined;
       if (eventId) {
         Object.defineProperty(this.state.seen, eventId, { value: { reply: reply.slice(0, 4000), at: this.now(), ...(publicResult ? {publicResult} : {}) }, writable: true, enumerable: true, configurable: true });
         // Bound deduplication storage; delivery TTL and Pub/Sub retention are separate concerns.
@@ -195,7 +196,7 @@ export class Engine {
         if (space) this.state.outbox.push({ id: randomUUID(), space, user, thread, text: reply, commandId: eventId, ...(publicResult?.choices ? { search: publicResult } : {}) });
       }
       this.store.save();
-      await this.dispatch();
+      if (!searching) await this.dispatch();
       return publicResult || reply;
     });
   }

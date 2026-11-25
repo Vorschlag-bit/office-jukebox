@@ -41,9 +41,10 @@ export class AppsScriptWorker extends GoogleWorker {
     check(Array.isArray(r.allowedSpaces) && this.config.allowedSpaces.every(s => r.allowedSpaces.includes(s)), 'BRIDGE_CONFIG', '양쪽 허용 스페이스 설정이 다릅니다.');
     return { ok: true, transport: 'apps-script', protocol: r.protocol, allowedSpaceCount: r.allowedSpaces.length, billingVerified: false, hardwareVerified: false };
   }
-  async flushBatch() {
+  async flushBatch(commandId) {
     for (let i = 0; i < 3; i++) {
-      const item = await this.engine.serial(async () => structuredClone(this.engine.state.outbox.find(x => !x.nextAttemptAt || x.nextAttemptAt <= this.now())));
+      const item = await this.engine.serial(async () => structuredClone(this.engine.state.outbox.find(x =>
+        (!commandId || x.commandId === commandId) && (!x.nextAttemptAt || x.nextAttemptAt <= this.now()))));
       if (!item) return;
       if (!this.config.allowedSpaces.includes(item.space) || !/^users\/[A-Za-z0-9_-]+$/.test(item.user || '')) {
         await this.engine.serial(async () => { this.engine.state.outbox = this.engine.state.outbox.filter(x => x.id !== item.id); this.engine.state.deadLetters.push({ ...item, failure: 'BRIDGE_RECIPIENT', failedAt: this.now() }); this.engine.state.deadLetters = this.engine.state.deadLetters.slice(-100); this.engine.store.save(); });
@@ -55,7 +56,7 @@ export class AppsScriptWorker extends GoogleWorker {
       this.health.lastSendAt = this.now();
     }
   }
-  async cycle() {
+  async cycle({ waitForCommand = false } = {}) {
     try { await this.flush(); } catch { /* Receive independently from result retries. */ }
     if (this.engine.state.outbox.length >= 500) return;
     const snapshot = this.engine.snapshot();
@@ -65,24 +66,38 @@ export class AppsScriptWorker extends GoogleWorker {
     const songs = snapshot.queue.map(x => ({ id: x.id, title: [...x.title].slice(0, 80).join('') }));
     const revision = createHash('sha256').update(JSON.stringify(songs)).digest('hex');
     const queueView = this.queueRevision === revision ? undefined : { revision, songs };
-    const result = await this.bridge('pull', { clientId: this.clientId, view, queueView });
+    const result = await this.bridge('pull', { clientId: this.clientId, view, queueView, waitForCommand });
     if (result.queueRevision === revision) this.queueRevision = revision;
     else this.queueRevision = null;
     const c = result.command;
     if (!c) return;
     check(typeof c.id === 'string' && c.id.length <= 150 && typeof c.lease === 'string' && c.lease.length <= 100 && typeof c.text === 'string' && c.text.length <= 500 && /^users\/[A-Za-z0-9_-]+$/.test(c.user || '') && this.config.allowedSpaces.includes(c.space) && Number.isFinite(c.at), 'BRIDGE_COMMAND', '잘못된 중계 명령입니다.', 502);
     // Reuse durable Google event processing, operator checks, age checks and poison handling.
-    await this.receive({ message: { data: Buffer.from(JSON.stringify({ type: 'MESSAGE', eventTime: new Date(c.at).toISOString(), space: { name: c.space }, user: { name: c.user }, message: { name: c.id, argumentText: c.text, sender: { name: c.user, type: 'HUMAN' } } })).toString('base64') } }, { includeChoices: /^(검색|search)\s/i.test(c.text), selectionId: c.selectionId });
+    const search = /^(검색|search)\s/i.test(c.text);
+    await this.receive({ message: { data: Buffer.from(JSON.stringify({ type: 'MESSAGE', eventTime: new Date(c.at).toISOString(), space: { name: c.space }, user: { name: c.user }, message: { name: c.id, argumentText: c.text, sender: { name: c.user, type: 'HUMAN' } } })).toString('base64') } }, { includeChoices: search, selectionId: c.selectionId });
+    if (search) try { await this.flushBatch(c.id); } catch { /* Durable result remains queued. */ }
     await this.bridge('ack', { clientId: this.clientId, id: c.id, lease: c.lease });
     try { await this.flush(); } catch { /* Durable result remains queued. */ }
   }
   async start() {
     this.running = true;
-    let interval = this.config.pollIntervalMs ?? 5000;
+    const pollInterval = this.config.pollIntervalMs ?? 5000;
+    let interval = pollInterval;
     while (this.running) {
-      try { await this.cycle(); this.health.connected = true; this.health.lastError = null; interval = this.config.pollIntervalMs ?? 5000; }
-      catch (e) { this.health.connected = false; this.health.lastError = e.code || 'BRIDGE_NETWORK'; this.log(`Apps Script 연동 일시 중단: ${this.health.lastError}`); interval = Math.min(60000, interval * 2); }
-      if (this.running) await new Promise(resolve => { const timer = setTimeout(resolve, interval); this.wake = () => { clearTimeout(timer); resolve(); }; });
+      const started = this.now();
+      let delay;
+      try {
+        await this.cycle({ waitForCommand: pollInterval === 5000 });
+        interval = pollInterval;
+        this.health.connected = true; this.health.lastError = null;
+        delay = Math.max(250, interval - (this.now() - started));
+      } catch (e) {
+        this.health.connected = false; this.health.lastError = e.code || 'BRIDGE_NETWORK';
+        this.log(`Apps Script 연동 일시 중단: ${this.health.lastError}`);
+        interval = Math.min(60000, interval * 2);
+        delay = interval;
+      }
+      if (this.running) await new Promise(resolve => { const timer = setTimeout(resolve, delay); this.wake = () => { clearTimeout(timer); resolve(); }; });
     }
   }
 }

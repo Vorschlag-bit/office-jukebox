@@ -334,7 +334,7 @@ test('new Chat search keeps same dialog, isolates users and rejects stale search
   const click = (command, user = 'users/test') => r.context.onCardClick(dialogEvent(r, command, { dialogEventType: 'SUBMIT_DIALOG', user: { name: user, type: 'HUMAN' } }));
   const start = r.now();
   const timedOut = JSON.stringify(submit('old'));
-  assert.equal(r.now() - start, 20000);
+  assert.equal(r.now() - start, 5600);
   assert.match(timedOut, /다시 시도/);
   assert.doesNotMatch(timedOut, /결과 보기|search-pick/);
   const oldCheck = timedOut.match(/search-check:[a-f0-9]{64}/)[0];
@@ -381,6 +381,24 @@ test('Chat search submission returns a delayed bridge result in the same private
   assert.match(card, new RegExp('search-pick:' + resultId + ':1'));
   assert.doesNotMatch(card, /결과 보기|search-check/);
   assert.equal(e.state.queue.length, 0);
+});
+
+test('a waiting relay leases a command arriving after the original pull without holding the lock', () => {
+  const r = runtime();
+  const clientId = randomUUID();
+  const sleep = r.context.Utilities.sleep;
+  let queued = false;
+  r.context.Utilities.sleep = ms => {
+    sleep(ms);
+    if (!queued) {
+      queued = true;
+      assert.match(r.message('검색 밤편지'), /접수/);
+    }
+  };
+  const response = r.call('pull', { clientId, waitForCommand: true });
+  assert.equal(response.ok, true);
+  assert.equal(response.command.text, '검색 밤편지');
+  assert.equal(r.call('pull', { clientId }).command, null);
 });
 
 test('feature feedback is stored once and exposed privately only to configured operators', async () => {
