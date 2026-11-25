@@ -356,3 +356,50 @@ test('explicit receiver idle after an unconfirmed selection restores queue or BG
     assert.equal(calls.filter(call => call.name === 'setPlaylist').length, 1);
   }
 });
+
+test('TV end snapshots after restart dispatch a saved manual song or seasonal BGM exactly once', async t => {
+  for (const restoreManual of [false, true]) {
+    const { adapter, send, calls } = adapterFixture(t);
+    const store = new MemoryStore();
+    store.state.current = { ...track, source: 'url', desiredState: 'playing', observedPlaying: false };
+    if (restoreManual) store.state.manualReturn = {
+      videoId: 'aaaaaaaaaaa', title: 'Manual song', source: 'external_tv',
+      expiresAt: Date.now() + 60000, resumePositionSeconds: 42
+    };
+    const engine = new Engine({ store, adapter, background: { enabled: true }, youtube: {} });
+    await engine.start();
+    // Recovery receives no playing event and no playlistModified event.
+    send(11, 'nowPlaying', { state: 0 });
+    send(12, 'nowPlaying', { state: 0 });
+    await engine.chain;
+    assert.equal(store.state.current.status, 'recovery_required');
+    await adapter.requestStatus();
+    send(13, 'nowPlaying', { videoId: '', state: '0' });
+    await engine.chain;
+    assert.equal(store.state.history.at(-1).status, 'tv_idle');
+    assert.equal(store.state.current.source, restoreManual ? 'external_tv' : 'background');
+    if (restoreManual) assert.equal(calls.find(call => call.name === 'setPlaylist').params.currentTime, 42);
+    send(14, 'nowPlaying', { state: 0 });
+    await adapter.requestStatus();
+    send(15, 'nowPlaying', { state: 0 });
+    await engine.chain;
+    assert.equal(calls.filter(call => call.name === 'setPlaylist').length, 1);
+  }
+});
+
+test('TV end snapshots need fresh replies and cannot skip a playing, paused or replaced video', async t => {
+  const { adapter, send, events } = adapterFixture(t);
+  await adapter.attach(track);
+  send(11, 'nowPlaying', { state: 0 });
+  await adapter.requestStatus();
+  send(12, 'nowPlaying', { videoId: 'aaaaaaaaaaa', state: 0 });
+  send(13, 'nowPlaying', { videoId: track.videoId, cpn: 'live', state: 1 });
+  await adapter.requestStatus();
+  send(14, 'nowPlaying', { state: 0 });
+  send(15, 'onStateChange', { cpn: 'live', state: 2 });
+  await adapter.requestStatus();
+  send(16, 'nowPlaying', { state: 0 });
+  await adapter.requestStatus();
+  send(17, 'nowPlaying', { state: 0 });
+  assert.deepEqual(events.map(event => event.event), ['playing', 'paused']);
+});

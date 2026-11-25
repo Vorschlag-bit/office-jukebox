@@ -168,6 +168,7 @@ export class LoungeAdapter {
         try { await this.client.command('getSubtitlesTrack'); }
         catch (error) { this.lastStatusError = error.code || 'TV_STATUS_QUERY'; }
       }
+      if (this.target) this.target.statusQueryEpoch = this.client.epoch;
       await this.client.command('getNowPlaying');
     })().catch(error => {
       this.lastStatusError = error.code || 'TV_STATUS_QUERY';
@@ -219,29 +220,32 @@ export class LoungeAdapter {
       target.adActive = ![0, -1].includes(state); target.idleQuery = null; return;
     }
     if (event.name === 'nowPlaying') {
-      if (this.identityConflict && payload.videoId !== target.videoId && (!payload.videoId || this.staleVideoIds.has(payload.videoId))) return;
-      if (this.identityConflict && payload.videoId === target.videoId && payload.cpn) this.identityConflict = null;
-      // Two explicit idle snapshots can release an item even if the receiver
-      // only reported its selected video, as long as both are in this session.
-      const empty = Object.keys(payload).length === 0 ||
-        (payload.videoId === '' || payload.videoId === undefined) &&
-        (payload.cpn === '' || payload.cpn === undefined) &&
-        (payload.state === 0 || payload.state === '0');
-      if (empty) {
-        const sawPlaying = target.playing && target.liveEpoch === this.client.epoch;
-        const idleContext = target.lastState === 1 && sawPlaying ||
-          target.selectedInEpoch && target.lastState === undefined;
-        if (this.statusQueries > 0 && idleContext && !target.adActive && !target.finished) {
+      const empty = Object.keys(payload).length === 0;
+      const noVideo = payload.videoId === '' || payload.videoId === undefined;
+      const noNonce = payload.cpn === '' || payload.cpn === undefined;
+      const endedState = payload.state === 0 || payload.state === '0';
+      const sawPlaying = target.playing && target.liveEpoch === this.client.epoch;
+      const explicitIdle = endedState && noNonce && (noVideo || sawPlaying && payload.videoId === target.videoId);
+      if (explicitIdle || empty && !this.identityConflict) {
+        // A receiver can explicitly report state=0 after reconnecting without
+        // repeating playing or including a nonce. Require two fresh queries.
+        // An empty object alone still needs positive selection/playback context.
+        const idleContext = ![2, 3].includes(target.lastState) && (
+          explicitIdle && (target.observing || sawPlaying || target.selectedInEpoch) ||
+          target.lastState === 1 && sawPlaying || target.selectedInEpoch && target.lastState === undefined);
+        if (target.statusQueryEpoch === this.client.epoch && idleContext && !target.adActive && !target.finished) {
           if (target.idleQuery != null && this.statusQueries > target.idleQuery) {
             target.finished = true;
             this.recordObservation();
-            this.emit('idle', { verifiedObservation: true, verifiedSelection: !sawPlaying });
+            this.emit('idle', { verifiedObservation: true });
           } else if (target.idleQuery == null) {
             target.idleQuery = this.statusQueries;
           }
         }
         return;
       }
+      if (this.identityConflict && payload.videoId !== target.videoId && (!payload.videoId || this.staleVideoIds.has(payload.videoId))) return;
+      if (this.identityConflict && payload.videoId === target.videoId && payload.cpn) this.identityConflict = null;
       target.idleQuery = null;
       if (payload.videoId && payload.videoId !== target.videoId) target.selectedInEpoch = false;
       if (/^[A-Za-z0-9_-]{11}$/.test(payload.videoId || '') && typeof payload.cpn === 'string' && payload.cpn.length > 0 && payload.cpn.length <= 256 && !this.retiredCpns.has(payload.cpn) && [1,2,3].includes(Number(payload.state)) && (target.playing || target.observing) && (payload.videoId !== target.videoId || target.cpn && payload.cpn !== target.cpn)) {

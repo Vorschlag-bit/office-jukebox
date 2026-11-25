@@ -245,7 +245,7 @@ export class Engine {
       return this.snapshot();
     });
   }
-  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, verifiedSelection = false, observedVideoId, observationSessionId, observedState, positionSeconds, durationSeconds }) {
+  async nativeEvent({ sessionId, videoId, event, verifiedObservation = false, observedVideoId, observationSessionId, observedState, positionSeconds, durationSeconds }) {
     return this.serial(async () => {
       if (!this.state.current || this.state.current.sessionId !== sessionId || this.state.current.videoId !== videoId) return false;
       if (event === 'identity' && this.adapter.type === 'lounge' && /^[A-Za-z0-9_-]{11}$/.test(observedVideoId || '') && /^[a-f0-9-]{36}$/.test(observationSessionId || '')) {
@@ -294,7 +294,7 @@ export class Engine {
       if (event === 'idle' && this.adapter.type === 'lounge' && verifiedObservation) {
         const current = this.state.current;
         const validError = current.status !== 'error' || current.error === 'PLAYBACK_NOT_CONFIRMED';
-        if (!validError || !(current.observedPlaying || verifiedSelection) || this.state.paused || current.desiredState === 'paused') return false;
+        if (!validError || this.state.paused || current.desiredState === 'paused') return false;
         // Explicit receiver idle is distinct from a nonce-confirmed natural end.
         this.archive('tv_idle');
         this.consecutiveFailures = 0;
